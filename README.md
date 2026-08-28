@@ -30,7 +30,7 @@ Todas usan la contraseña `fitt2026`.
 | Correo | Rol | Qué ve |
 |---|---|---|
 | `comercial@fittglobal.com` | Comercial | Panel gerencial, forecast, resultados, clientes |
-| `admin@fittglobal.com` | Administrador | Todo el portal |
+| `ivan@fittglobal.com` | Administrador | Todo el portal |
 | `supervisor@fittglobal.com` | Supervisor de campo | Rutas, visitas, novedades, equipo |
 | `mercaderista@fittglobal.com` | Mercaderista | Su ruta del día, sus tiendas y sus novedades |
 

@@ -6,7 +6,7 @@ import { IconAlert, IconArrowRight, IconRoute, IconExpiry, IconForecast } from "
 
 const DEMO = [
   { email: "comercial@fittglobal.com", label: "Mariana Escobar", role: "Comercial", desc: "Forecast, resultados y cartera de clientes" },
-  { email: "admin@fittglobal.com", label: "Deivan Rodríguez", role: "Administrador", desc: "Acceso completo al portal" },
+  { email: "ivan@fittglobal.com", label: "Deivan Rodríguez", role: "Administrador", desc: "Acceso completo al portal" },
   { email: "supervisor@fittglobal.com", label: "Hernán Duque", role: "Supervisor de campo", desc: "Rutas, visitas y novedades" },
   { email: "mercaderista@fittglobal.com", label: "Kevin Ospina", role: "Mercaderista", desc: "Su ruta del día y reportes de góndola" },
 ];

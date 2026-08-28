@@ -140,7 +140,7 @@ async function main() {
   // ── Usuarios ───────────────────────────────────────────────────────────────
   const hash = bcrypt.hashSync("fitt2026", 10);
   const userSpecs = [
-    { email: "admin@fittglobal.com", name: "Deivan Rodríguez", role: "ADMIN", zone: null, color: "#7c3aed" },
+    { email: "ivan@fittglobal.com", name: "Deivan Rodríguez", role: "ADMIN", zone: null, color: "#7c3aed" },
     { email: "comercial@fittglobal.com", name: "Mariana Escobar", role: "COMERCIAL", zone: null, color: "#2563eb" },
     { email: "supervisor@fittglobal.com", name: "Hernán Duque", role: "SUPERVISOR", zone: "Bogotá", color: "#ea580c" },
     { email: "supervisor.med@fittglobal.com", name: "Alba Restrepo", role: "SUPERVISOR", zone: "Medellín", color: "#db2777" },
@@ -657,7 +657,7 @@ async function main() {
   }
   console.log("🅰️  Clasificación ABC recalculada");
 
-  console.log(`\n✅ Base lista. Acceso: admin@fittglobal.com / fitt2026 (usuarios: ${users.map((u) => u.email).join(", ")})`);
+  console.log(`\n✅ Base lista. Acceso: ivan@fittglobal.com / fitt2026 (usuarios: ${users.map((u) => u.email).join(", ")})`);
   console.log(`   Admin: ${admin.email} · Comercial: ${comercial.email}`);
 }
 
