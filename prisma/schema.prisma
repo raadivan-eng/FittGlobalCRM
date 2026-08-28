@@ -1,0 +1,351 @@
+// Fitt Global CRM — Portal administrativo para distribución mayorista
+// SQLite no soporta enums nativos: los estados viajan como String y se validan
+// contra las constantes de src/lib/enums.ts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────  Personas del sistema  ─────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String // ADMIN | COMERCIAL | SUPERVISOR | MERCADERISTA
+  phone        String?
+  zone         String? // zona geográfica que cubre un mercaderista
+  active       Boolean  @default(true)
+  avatarColor  String   @default("#2563eb")
+  createdAt    DateTime @default(now())
+
+  assignments       StoreAssignment[]
+  visits            Visit[]           @relation("VisitMerchandiser")
+  incidentsReported Incident[]        @relation("IncidentReporter")
+  incidentsAssigned Incident[]        @relation("IncidentAssignee")
+  accounts          Company[]         @relation("AccountOwner")
+  forecasts         Forecast[]
+  orders            SalesOrder[]
+
+  @@index([role, active])
+}
+
+// ─────────────────────────────  CRM: clientes y tiendas  ──────────────────────
+
+/// Empresa cliente (cadena, mayorista, independiente). Agrupa tiendas y contactos.
+model Company {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  taxId           String?
+  type            String // CADENA | MAYORISTA | INDEPENDIENTE | HORECA
+  channel         String // MODERNO | TRADICIONAL | HORECA | ECOMMERCE
+  tier            String   @default("B") // A | B | C — clasificación ABC por facturación
+  creditLimit     Float    @default(0)
+  paymentTermDays Int      @default(30)
+  city            String?
+  address         String?
+  phone           String?
+  email           String?
+  notes           String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  ownerId   String?
+  owner     User?        @relation("AccountOwner", fields: [ownerId], references: [id])
+  stores    Store[]
+  contacts  Contact[]
+  orders    SalesOrder[]
+  invoices  Invoice[]
+  forecasts Forecast[]
+
+  @@index([tier, active])
+}
+
+/// Punto de venta físico. Es la unidad que visita el mercaderista.
+model Store {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  companyId       String
+  address         String?
+  city            String
+  zone            String // usada para agrupar rutas
+  lat             Float
+  lng             Float
+  format          String // HIPERMERCADO | SUPERMERCADO | MINIMARKET | BODEGA | FARMACIA | MAYORISTA
+  tier            String   @default("B") // A | B | C
+  visitsPerMonth  Int      @default(2) // frecuencia objetivo de visita
+  avgVisitMinutes Int      @default(35)
+  openTime        String   @default("08:00")
+  closeTime       String   @default("18:00")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  company     Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contacts    Contact[]
+  assignments StoreAssignment[]
+  visits      Visit[]
+  incidents   Incident[]
+  orders      SalesOrder[]
+
+  @@index([zone, active])
+  @@index([companyId])
+}
+
+/// Persona de contacto. Siempre pertenece a una empresa y, opcionalmente, a una tienda concreta.
+model Contact {
+  id              String    @id @default(cuid())
+  firstName       String
+  lastName        String
+  email           String?
+  phone           String?
+  position        String // Comprador, Jefe de tienda, Gerente de categoría…
+  companyId       String
+  storeId         String?
+  isPrimary       Boolean   @default(false)
+  isDecisionMaker Boolean   @default(false)
+  notes           String?
+  lastContactAt   DateTime?
+  createdAt       DateTime  @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  store   Store?  @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([storeId])
+}
+
+// ─────────────────────────  Trabajo de campo (mercaderistas)  ─────────────────
+
+model StoreAssignment {
+  id        String   @id @default(cuid())
+  storeId   String
+  userId    String
+  priority  Int      @default(3) // 1 = máxima
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, userId])
+}
+
+model Visit {
+  id              String    @id @default(cuid())
+  storeId         String
+  userId          String
+  plannedDate     DateTime
+  status          String    @default("PLANIFICADA") // PLANIFICADA | EN_CURSO | COMPLETADA | NO_REALIZADA
+  checkInAt       DateTime?
+  checkOutAt      DateTime?
+  checkInLat      Float?
+  checkInLng      Float?
+  durationMinutes Int?
+  objective       String?
+  summary         String?
+  travelMinutes   Int? // estimado por el planificador de rutas
+  sequence        Int? // orden dentro de la ruta del día
+  createdAt       DateTime  @default(now())
+
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user         User          @relation("VisitMerchandiser", fields: [userId], references: [id], onDelete: Cascade)
+  shelfReports ShelfReport[]
+  incidents    Incident[]
+
+  @@index([userId, plannedDate])
+  @@index([storeId, plannedDate])
+  @@index([status])
+}
+
+/// Foto de la góndola para un producto en una visita concreta.
+model ShelfReport {
+  id              String  @id @default(cuid())
+  visitId         String
+  productId       String
+  facings         Int     @default(0) // caras visibles en el lineal
+  unitsOnShelf    Int     @default(0)
+  shelfPrice      Float?
+  competitorPrice Float?
+  outOfStock      Boolean @default(false)
+  planogramOk     Boolean @default(true)
+  priceTagOk      Boolean @default(true)
+  nearExpiryUnits Int     @default(0)
+  notes           String?
+
+  visit   Visit   @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([visitId, productId])
+  @@index([productId])
+}
+
+/// Novedad reportada en el punto de venta.
+model Incident {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  storeId      String
+  visitId      String?
+  productId    String?
+  type         String // QUIEBRE | PRECIO | EXHIBICION | VENCIMIENTO | DANIO | COMPETENCIA | OTRO
+  severity     String // BAJA | MEDIA | ALTA | CRITICA
+  status       String    @default("ABIERTA") // ABIERTA | EN_PROCESO | RESUELTA | DESCARTADA
+  title        String
+  description  String?
+  reportedById String
+  assignedToId String?
+  dueAt        DateTime?
+  resolvedAt   DateTime?
+  resolution   String?
+  createdAt    DateTime  @default(now())
+
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  visit      Visit?   @relation(fields: [visitId], references: [id], onDelete: SetNull)
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  reportedBy User     @relation("IncidentReporter", fields: [reportedById], references: [id])
+  assignedTo User?    @relation("IncidentAssignee", fields: [assignedToId], references: [id])
+
+  @@index([status, severity])
+  @@index([storeId])
+}
+
+// ───────────────────────────  Productos e inventario  ─────────────────────────
+
+model Product {
+  id            String   @id @default(cuid())
+  sku           String   @unique
+  barcode       String?
+  name          String
+  brand         String
+  category      String
+  subcategory   String?
+  unitPrice     Float // precio de lista mayorista
+  unitCost      Float
+  unitsPerCase  Int      @default(12)
+  shelfLifeDays Int      @default(365)
+  minStock      Int      @default(100)
+  imageEmoji    String   @default("📦")
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  lots         InventoryLot[]
+  orderLines   SalesOrderLine[]
+  shelfReports ShelfReport[]
+  incidents    Incident[]
+  forecasts    Forecast[]
+
+  @@index([category, active])
+}
+
+model Warehouse {
+  id   String @id @default(cuid())
+  code String @unique
+  name String
+  city String
+
+  lots InventoryLot[]
+}
+
+/// Lote con fecha de vencimiento: base del control de caducidad.
+model InventoryLot {
+  id          String   @id @default(cuid())
+  lotCode     String
+  productId   String
+  warehouseId String
+  quantity    Int
+  unitCost    Float
+  expiryDate  DateTime
+  receivedAt  DateTime @default(now())
+  status      String   @default("DISPONIBLE") // DISPONIBLE | BLOQUEADO | LIQUIDACION | MERMA
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([expiryDate])
+  @@index([productId])
+}
+
+// ─────────────────────────────  Ventas y forecast  ────────────────────────────
+
+model SalesOrder {
+  id          String   @id @default(cuid())
+  number      String   @unique
+  companyId   String
+  storeId     String?
+  date        DateTime
+  status      String   @default("CONFIRMADO") // BORRADOR | CONFIRMADO | DESPACHADO | FACTURADO | ANULADO
+  subtotal    Float    @default(0)
+  discount    Float    @default(0)
+  tax         Float    @default(0)
+  total       Float    @default(0)
+  createdById String?
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  store     Store?           @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  createdBy User?            @relation(fields: [createdById], references: [id])
+  lines     SalesOrderLine[]
+  invoice   Invoice?
+
+  @@index([date])
+  @@index([companyId])
+}
+
+model SalesOrderLine {
+  id          String @id @default(cuid())
+  orderId     String
+  productId   String
+  quantity    Int
+  unitPrice   Float
+  discountPct Float  @default(0)
+  total       Float
+
+  order   SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model Invoice {
+  id         String   @id @default(cuid())
+  number     String   @unique
+  orderId    String?  @unique
+  companyId  String
+  issueDate  DateTime
+  dueDate    DateTime
+  total      Float
+  paidAmount Float    @default(0)
+  status     String   @default("EMITIDA") // EMITIDA | PARCIAL | PAGADA | VENCIDA | ANULADA
+
+  order   SalesOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([issueDate])
+  @@index([status])
+}
+
+/// Proyección de venta cargada por el comercial. Se compara contra facturación real.
+model Forecast {
+  id          String   @id @default(cuid())
+  period      String // "2026-08"
+  companyId   String?
+  productId   String?
+  amount      Float
+  units       Int      @default(0)
+  notes       String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([period])
+}
