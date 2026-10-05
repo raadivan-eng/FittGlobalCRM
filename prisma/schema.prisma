@@ -33,6 +33,8 @@ model User {
   forecasts         Forecast[]
   orders            SalesOrder[]
   connectionEvents  ApiConnectionEvent[]
+  shipments         Shipment[]
+  shipmentEvents    ShipmentEvent[]
 
   @@index([role, active])
 }
@@ -65,6 +67,7 @@ model Company {
   orders    SalesOrder[]
   invoices  Invoice[]
   forecasts Forecast[]
+  shipments Shipment[]
 
   @@index([tier, active])
 }
@@ -104,6 +107,7 @@ model Store {
   visits      Visit[]
   incidents   Incident[]
   orders      SalesOrder[]
+  shipments   Shipment[]
 
   @@unique([companyId, code])
   @@index([zone, active])
@@ -303,6 +307,7 @@ model SalesOrder {
   createdBy User?            @relation(fields: [createdById], references: [id])
   lines     SalesOrderLine[]
   invoice   Invoice?
+  shipments Shipment[]
 
   @@index([date])
   @@index([companyId])
@@ -360,6 +365,73 @@ model Forecast {
   @@index([period])
 }
 
+// ───────────────────────────  Guías de transporte  ────────────────────────────
+
+/// Guía de envío con una transportadora. Nace en el portal como BORRADOR y
+/// pasa a GENERADA cuando tiene número: o porque se transcribe la que se hizo
+/// en el sitio de la transportadora (MANUAL) o porque la pidió el portal por su
+/// API (API). El catálogo de transportadoras vive en src/lib/integrations.ts.
+model Shipment {
+  id                 String    @id @default(cuid())
+  code               String    @unique // consecutivo interno GU-00001
+  carrier            String // SERVIENTREGA | COORDINADORA | INTERRAPIDISIMO | ENVIA | TCC | DEPRISA
+  trackingNumber     String? // número que asigna la transportadora; vacío en borrador
+  source             String    @default("MANUAL") // MANUAL | API
+  status             String    @default("BORRADOR") // BORRADOR | GENERADA | RECOGIDA | EN_TRANSITO | EN_REPARTO | NOVEDAD | ENTREGADA | DEVUELTA | ANULADA
+  orderId            String?
+  companyId          String?
+  storeId            String?
+  recipientName      String
+  recipientPhone     String?
+  destinationAddress String
+  destinationCity    String
+  packages           Int       @default(1)
+  weightKg           Float?
+  declaredValue      Float     @default(0)
+  shippingCost       Float?
+  contents           String?
+  notes              String?
+  labelUrl           String? // rótulo en PDF cuando la transportadora lo devuelve
+  estimatedDelivery  DateTime?
+  shippedAt          DateTime?
+  deliveredAt        DateTime?
+  lastSyncAt         DateTime? // última consulta de estado contra la API
+  lastSyncError      String?
+  createdById        String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  order     SalesOrder?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  company   Company?        @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  store     Store?          @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  createdBy User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  events    ShipmentEvent[]
+
+  @@unique([carrier, trackingNumber])
+  @@index([status])
+  @@index([createdAt])
+  @@index([orderId])
+}
+
+/// Movimiento en la trazabilidad de una guía: lo reporta la transportadora
+/// (API), lo anota una persona (MANUAL) o lo deja el propio portal (SISTEMA).
+model ShipmentEvent {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  status      String // mismo catálogo que Shipment.status
+  description String
+  location    String?
+  occurredAt  DateTime
+  source      String // MANUAL | API | SISTEMA
+  userId      String?
+  createdAt   DateTime @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([shipmentId, occurredAt])
+}
+
 // ────────────────────────────  Conexiones vía API  ────────────────────────────
 
 /// Credenciales de un servicio externo (Siigo, Meta, Google). El catálogo de
@@ -368,7 +440,7 @@ model Forecast {
 /// sólo muestra `secretHint`.
 model ApiConnection {
   id           String    @id @default(cuid())
-  provider     String    @unique // SIIGO | META | GOOGLE
+  provider     String    @unique // SIIGO | META | GOOGLE | MAPS | transportadoras
   status       String    @default("SIN_CONFIGURAR") // SIN_CONFIGURAR | PENDIENTE | CONECTADA | ERROR
   account      String? // identificador público de la cuenta: usuario, client id, id de negocio
   secretCipher String? // resto de credenciales en JSON cifrado (AES-256-GCM)

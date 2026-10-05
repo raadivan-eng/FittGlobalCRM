@@ -137,6 +137,34 @@ export const CONNECTION_EVENTS = catalog([
   { value: "INFO", label: "Cambio", tone: "info" },
 ] as const);
 
+/**
+ * Ciclo de vida de una guía. El orden importa: es el que sigue la línea de
+ * tiempo y el que se ofrece al registrar un movimiento a mano.
+ */
+export const SHIPMENT_STATUS = catalog([
+  { value: "BORRADOR", label: "Borrador", tone: "neutral", hint: "Preparada en el portal, todavía sin número de guía" },
+  { value: "GENERADA", label: "Generada", tone: "info", hint: "La transportadora asignó número; falta que recoja" },
+  { value: "RECOGIDA", label: "Recogida", tone: "info", hint: "La transportadora tiene la mercancía" },
+  { value: "EN_TRANSITO", label: "En tránsito", tone: "purple", hint: "Viajando entre centros de distribución" },
+  { value: "EN_REPARTO", label: "En reparto", tone: "purple", hint: "Salió a entrega en la ciudad de destino" },
+  { value: "NOVEDAD", label: "Con novedad", tone: "warning", hint: "Dirección errada, destinatario ausente, rechazo… requiere gestión" },
+  { value: "ENTREGADA", label: "Entregada", tone: "success", hint: "Recibida en destino" },
+  { value: "DEVUELTA", label: "Devuelta", tone: "danger", hint: "Regresó al remitente sin entregarse" },
+  { value: "ANULADA", label: "Anulada", tone: "neutral", hint: "Cancelada antes de despacharse" },
+] as const);
+
+/** Estados en los que la guía sigue viva y vale la pena consultarla. */
+export const SHIPMENT_ACTIVE = ["GENERADA", "RECOGIDA", "EN_TRANSITO", "EN_REPARTO", "NOVEDAD"] as const;
+/** Estados finales: ya no cambian y no se consultan más. */
+export const SHIPMENT_CLOSED = ["ENTREGADA", "DEVUELTA", "ANULADA"] as const;
+
+/** Quién originó una guía o un movimiento de su trazabilidad. */
+export const SHIPMENT_SOURCE = catalog([
+  { value: "API", label: "API", tone: "info", hint: "Lo informó la transportadora por su API" },
+  { value: "MANUAL", label: "Manual", tone: "neutral", hint: "Lo registró una persona en el portal" },
+  { value: "SISTEMA", label: "Portal", tone: "neutral", hint: "Lo anotó el portal al crear o anular la guía" },
+] as const);
+
 /** Semáforo de vencimiento: la regla de negocio que ordena todo el módulo de inventario. */
 export const EXPIRY_BANDS = [
   { key: "VENCIDO", label: "Vencido", tone: "danger" as Tone, maxDays: -1 },

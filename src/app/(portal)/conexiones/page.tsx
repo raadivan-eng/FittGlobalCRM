@@ -1,9 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { PROVIDERS } from "@/lib/integrations";
+import { CATEGORIES, PROVIDERS } from "@/lib/integrations";
+import { carrierAdapter } from "@/lib/carriers";
 import { CONNECTION_EVENTS, CONNECTION_STATUS } from "@/lib/enums";
 import { fmtDateTime } from "@/lib/format";
-import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
+import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, SectionTitle, StatTile } from "@/components/ui";
 import { IconCheck, IconClock, IconPlug } from "@/components/icons";
 import { ConnectionCard, type ConnectionView } from "./connection-card";
 
@@ -12,9 +13,10 @@ export const dynamic = "force-dynamic";
 
 /**
  * Color de marca de cada proveedor: sale de la paleta de series en el mismo
- * orden fijo que los gráficos, para no inventar tonos nuevos.
+ * orden fijo que los gráficos, para no inventar tonos nuevos. Cada tipo
+ * (servicios, transportadoras) arranca de nuevo en el primer slot.
  */
-const MARKS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)"];
+const MARKS = Array.from({ length: 8 }, (_, i) => `var(--series-${i + 1})`);
 
 export default async function ConexionesPage() {
   await requireSection("conexiones");
@@ -30,7 +32,7 @@ export default async function ConexionesPage() {
 
   const byProvider = new Map(rows.map((r) => [r.provider, r]));
 
-  const cards = PROVIDERS.map((provider, i) => {
+  const cards = PROVIDERS.map((provider) => {
     const row = byProvider.get(provider.key);
     const view: ConnectionView = {
       status: row?.status ?? "SIN_CONFIGURAR",
@@ -40,8 +42,21 @@ export default async function ConexionesPage() {
       lastDetail: row?.lastDetail ?? null,
       lastError: row?.lastError ?? null,
     };
-    return { provider, color: MARKS[i], view };
+    // Una transportadora sin adaptador acepta credenciales, pero no hay contra qué probarlas.
+    const ready = provider.kind !== "TRANSPORTE" || Boolean(carrierAdapter(provider.key));
+    return { provider, view, ready };
   });
+  // El color sigue el orden fijo dentro de cada tipo (servicios, transportadoras),
+  // no dentro de la categoría: así dos servicios nunca comparten tono.
+  const colorOf = new Map(
+    (["SISTEMA", "TRANSPORTE"] as const).flatMap((kind) =>
+      cards.filter((c) => c.provider.kind === kind).map((c, i) => [c.provider.key, MARKS[i]] as const),
+    ),
+  );
+  const groups = CATEGORIES.map((category) => ({
+    ...category,
+    cards: cards.filter((c) => c.provider.category === category.key),
+  })).filter((g) => g.cards.length);
 
   const conectadas = cards.filter((c) => c.view.status === "CONECTADA").length;
   const conError = cards.filter((c) => c.view.status === "ERROR").length;
@@ -62,7 +77,7 @@ export default async function ConexionesPage() {
       <div className="grid gap-3 sm:grid-cols-3">
         <StatTile
           label="Conexiones activas"
-          value={`${conectadas} de ${PROVIDERS.length}`}
+          value={`${conectadas} de ${cards.length}`}
           hint={conError ? `${conError} con error` : "Ninguna con error"}
           icon={<IconPlug size={15} />}
         />
@@ -80,11 +95,34 @@ export default async function ConexionesPage() {
         />
       </div>
 
-      <div className="mt-5 grid items-start gap-4 md:grid-cols-2 2xl:grid-cols-4">
-        {cards.map(({ provider, color, view }) => (
-          <ConnectionCard key={provider.key} provider={provider} color={color} state={view} />
-        ))}
-      </div>
+      {groups.map((group) => {
+        const activas = group.cards.filter((c) => c.view.status === "CONECTADA").length;
+        return (
+          <section key={group.key} className="mt-7">
+            <SectionTitle
+              action={
+                <span className="text-[12px] tabular text-[var(--text-muted)]">
+                  {activas} de {group.cards.length} {group.cards.length === 1 ? "conectada" : "conectadas"}
+                </span>
+              }
+            >
+              {group.title}
+            </SectionTitle>
+            <p className="-mt-2 mb-3 max-w-3xl text-[12.5px] text-[var(--text-secondary)]">{group.description}</p>
+            <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {group.cards.map(({ provider, view, ready }) => (
+                <ConnectionCard
+                  key={provider.key}
+                  provider={provider}
+                  color={colorOf.get(provider.key)!}
+                  state={view}
+                  ready={ready}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
 
       <Card className="mt-5">
         <CardHeader

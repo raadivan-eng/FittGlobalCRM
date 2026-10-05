@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { PROVIDER_KEYS } from "../src/lib/integrations";
+import { CARRIERS, PROVIDER_KEYS } from "../src/lib/integrations";
 
 const prisma = new PrismaClient();
 
@@ -121,6 +121,8 @@ const INCIDENT_TEMPLATES = [
 async function main() {
   console.log("🧹 Limpiando base…");
   await prisma.$transaction([
+    prisma.shipmentEvent.deleteMany(),
+    prisma.shipment.deleteMany(),
     prisma.apiConnectionEvent.deleteMany(),
     prisma.apiConnection.deleteMany(),
     prisma.shelfReport.deleteMany(),
@@ -658,6 +660,92 @@ async function main() {
     const tier = share <= 0.7 ? "A" : share <= 0.9 ? "B" : "C";
     await prisma.company.update({ where: { id: row.id }, data: { tier } });
   }
+  // ── Guías de envío de los pedidos recientes ─────────────────────────────────
+  // Todas MANUAL: sin credenciales de transportadora no hay guías por API.
+  const MOVES = [
+    { status: "RECOGIDA", desc: "Mercancía recogida en bodega del remitente" },
+    { status: "EN_TRANSITO", desc: "En tránsito hacia la ciudad de destino" },
+    { status: "EN_REPARTO", desc: "Salió a reparto con el mensajero" },
+    { status: "ENTREGADA", desc: "Entregado y recibido a satisfacción" },
+  ] as const;
+  const NOVEDADES = [
+    "Destinatario ausente en el horario de entrega",
+    "Dirección incompleta: falta número de local",
+    "Recibo de mercancía cerrado por inventario",
+  ];
+  const shippable = await prisma.salesOrder.findMany({
+    where: { status: { in: ["DESPACHADO", "FACTURADO"] }, date: { gte: dayOffset(-21) } },
+    orderBy: { date: "asc" },
+    include: { company: true, store: true },
+  });
+  const now = new Date();
+  let shipmentSeq = 0;
+  for (const order of shippable) {
+    if (order.status === "FACTURADO" && !chance(0.55)) continue;
+    shipmentSeq++;
+    const carrier = pick(CARRIERS.slice(0, 5)).key;
+    const created = new Date(order.date.getTime() + int(2, 20) * 3_600_000);
+    const age = (now.getTime() - created.getTime()) / 86_400_000;
+    // Cuántos pasos del ciclo alcanzó según su antigüedad: un despacho nacional tarda 2 a 4 días.
+    const reached = Math.max(0, Math.min(MOVES.length, Math.floor(age / (0.6 + rnd() * 0.5))));
+    const annulled = reached === 0 && chance(0.15);
+    const novelty = !annulled && reached >= 2 && reached < 4 && chance(0.25);
+    const returned = reached === 4 && chance(0.03);
+    const events: { status: string; description: string; location: string | null; occurredAt: Date; source: string }[] = [
+      { status: "GENERADA", description: `Guía registrada a mano`, location: null, occurredAt: created, source: "SISTEMA" },
+    ];
+    let t = created.getTime();
+    for (let k = 0; k < reached; k++) {
+      t += int(5, 26) * 3_600_000;
+      if (t > now.getTime()) break;
+      const move = returned && k === 3 ? { status: "DEVUELTA", desc: "Devuelto al remitente: el cliente rechazó la entrega" } : MOVES[k];
+      events.push({
+        status: move.status,
+        description: move.desc,
+        location: k === 0 ? "Bogotá" : order.store?.city ?? order.company.city ?? "Bogotá",
+        occurredAt: new Date(t),
+        source: "MANUAL",
+      });
+    }
+    if (novelty) {
+      t = Math.min(now.getTime(), t + int(2, 10) * 3_600_000);
+      events.push({ status: "NOVEDAD", description: pick(NOVEDADES), location: order.store?.city ?? order.company.city, occurredAt: new Date(t), source: "MANUAL" });
+    }
+    if (annulled) {
+      events.push({ status: "ANULADA", description: "Guía anulada: pedido reprogramado por el cliente", location: null, occurredAt: new Date(created.getTime() + 3_600_000), source: "SISTEMA" });
+    }
+    const last = events[events.length - 1];
+    const delivered = events.find((e) => e.status === "ENTREGADA");
+    await prisma.shipment.create({
+      data: {
+        code: `GU-${String(shipmentSeq).padStart(5, "0")}`,
+        carrier,
+        trackingNumber: String(int(100000000, 999999999)) + String(int(10, 99)),
+        source: "MANUAL",
+        status: last.status,
+        orderId: order.id,
+        companyId: order.companyId,
+        storeId: order.storeId,
+        recipientName: order.store ? `${order.company.name} — ${order.store.name}` : order.company.name,
+        recipientPhone: order.company.phone,
+        destinationAddress: order.store?.address ?? order.company.address ?? "Calle 80 # 69-70",
+        destinationCity: order.store?.city ?? order.company.city ?? "Bogotá",
+        packages: int(2, 24),
+        weightKg: int(15, 380),
+        declaredValue: Math.round(order.total),
+        shippingCost: int(18, 160),
+        contents: "Producto terminado en cajas corrugadas",
+        estimatedDelivery: new Date(created.getTime() + int(2, 4) * 86_400_000),
+        shippedAt: events[1]?.occurredAt ?? null,
+        deliveredAt: delivered?.occurredAt ?? null,
+        createdById: order.createdById,
+        createdAt: created,
+        events: { create: events.map((e) => ({ ...e, userId: e.source === "SISTEMA" ? null : order.createdById })) },
+      },
+    });
+  }
+  console.log(`🚚 ${shipmentSeq} guías de envío`);
+
   // ── Conexiones externas ────────────────────────────────────────────────────
   // Se crean vacías a propósito: las credenciales reales las carga el
   // administrador desde /conexiones. El seed no inventa tokens.

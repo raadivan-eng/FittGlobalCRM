@@ -4,57 +4,14 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "./prisma";
 import { requireRole } from "./auth";
 import { decryptJson, encryptJson } from "./secrets";
-import { providerByKey, secretHint, type ProviderKey } from "./integrations";
+import { isCarrier, providerByKey, secretHint, type Credentials, type ProviderKey } from "./integrations";
+import { asText, mensajeDeError, pedir } from "./http";
+import { carrierAdapter } from "./carriers";
 
-/** La prueba habla de verdad con el proveedor; sin tope, un host caído cuelga la acción. */
-const TIMEOUT_MS = 12_000;
 /** Versión fijada de la Graph API: subirla es cambiar esta línea. */
 const GRAPH_VERSION = "v21.0";
 
 export type ConnectionState = { error?: string; ok?: string };
-
-type Credentials = { account: string; secret: string; extra: string };
-type Json = Record<string, unknown>;
-
-const asRecord = (v: unknown): Json => (v && typeof v === "object" ? (v as Json) : {});
-const asText = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
-
-async function pedir(url: string, init: RequestInit) {
-  try {
-    const res = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) });
-    const text = await res.text();
-    let data: unknown = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      // Algunos errores llegan como HTML; nos quedamos con el estado y el texto.
-    }
-    return { res, body: asRecord(data), text };
-  } catch (e) {
-    const name = e instanceof Error ? e.name : "";
-    if (name === "TimeoutError") throw new Error(`El proveedor no respondió en ${TIMEOUT_MS / 1000} s.`);
-    throw new Error(`No se pudo alcanzar el servicio: ${e instanceof Error ? e.message : "error de red"}`);
-  }
-}
-
-/** Extrae el mensaje legible de las distintas formas de error de cada API. */
-function mensajeDeError(body: Json, texto: string) {
-  const lista = body.Errors ?? body.errors;
-  if (Array.isArray(lista) && lista.length) {
-    const first = asRecord(lista[0]);
-    const msg = asText(first.Message ?? first.message ?? first.Detail);
-    if (msg) return msg;
-  }
-  const anidado = asRecord(body.error);
-  return (
-    asText(body.error_description) ||
-    asText(anidado.message) ||
-    asText(body.message ?? body.Message) ||
-    asText(body.error) ||
-    texto.slice(0, 160) ||
-    "credenciales rechazadas"
-  );
-}
 
 /**
  * Prueba real contra el proveedor: pide un token (Siigo, Google) o consulta la
@@ -62,6 +19,12 @@ function mensajeDeError(body: Json, texto: string) {
  * falla, lanza con el mensaje tal cual lo dio el proveedor.
  */
 async function saludar(provider: ProviderKey, c: Credentials): Promise<string> {
+  if (isCarrier(provider)) {
+    const adapter = carrierAdapter(provider);
+    if (!adapter) throw new Error("La integración con esta transportadora todavía no está habilitada en el portal.");
+    return adapter.autenticar(c);
+  }
+
   if (provider === "SIIGO") {
     const { res, body, text } = await pedir("https://api.siigo.com/auth", {
       method: "POST",
@@ -158,8 +121,8 @@ export async function guardarConexion(_prev: ConnectionState, formData: FormData
       continue;
     }
     const valor = String(formData.get(field.name) ?? "").trim() || previos[field.name] || "";
-    if (!valor) faltantes.push(field.label);
-    else secretos[field.name] = valor;
+    if (valor) secretos[field.name] = valor;
+    else if (!field.optional) faltantes.push(field.label);
   }
 
   if (faltantes.length) return { error: `Falta completar: ${faltantes.join(", ")}.` };
@@ -182,7 +145,12 @@ export async function guardarConexion(_prev: ConnectionState, formData: FormData
 
   await registrar(row.id, "Credenciales actualizadas", "INFO", `Cuenta ${account}`, user.id);
   revalidatePath("/conexiones");
-  return { ok: "Credenciales guardadas. Prueba la conexión para verificarlas." };
+  return {
+    ok:
+      isCarrier(provider) && !carrierAdapter(provider)
+        ? "Credenciales guardadas. Quedan listas para cuando se habilite la integración."
+        : "Credenciales guardadas. Prueba la conexión para verificarlas.",
+  };
 }
 
 /** Consulta al proveedor con las credenciales guardadas y anota el resultado. */
@@ -191,6 +159,9 @@ export async function probarConexion(formData: FormData) {
   const provider = String(formData.get("provider") ?? "");
   const descriptor = providerByKey(provider);
   if (!descriptor) return;
+
+  // Sin adaptador no hay contra qué probar: la conexión queda «sin verificar».
+  if (isCarrier(provider) && !carrierAdapter(provider)) return;
 
   const row = await prisma.apiConnection.findUnique({ where: { provider } });
   const secretos = decryptJson(row?.secretCipher);
@@ -221,6 +192,7 @@ export async function probarConexion(formData: FormData) {
   }
 
   revalidatePath("/conexiones");
+  revalidatePath("/guias");
 }
 
 /** Borra las credenciales guardadas y deja la conexión sin configurar. */
@@ -246,4 +218,5 @@ export async function desconectarConexion(formData: FormData) {
   });
   await registrar(row.id, "Conexión desconectada", "INFO", "Se borraron las credenciales guardadas", user.id);
   revalidatePath("/conexiones");
+  revalidatePath("/guias");
 }

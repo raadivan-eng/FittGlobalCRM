@@ -60,4 +60,6 @@ export const IconBuilding = base('<rect x="4" y="3" width="16" height="18" rx="1
 export const IconPlug = base('<path d="M9 2v6M15 2v6"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2V22"/>');
 export const IconKey = base('<circle cx="8" cy="15" r="4"/><path d="m10.9 12.1 8-8"/><path d="m15.5 7.5 2 2"/><path d="m18.5 4.5 2 2"/>');
 export const IconRefresh = base('<path d="M3.5 12a8.5 8.5 0 0 1 14.6-5.9L21 9"/><path d="M21 4v5h-5"/><path d="M20.5 12a8.5 8.5 0 0 1-14.6 5.9L3 15"/><path d="M3 20v-5h5"/>');
+export const IconTruck = base('<path d="M2.5 6.5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1V16h-12z"/><path d="M14.5 9.5h3.6l3.4 3.6V16h-7z"/><circle cx="7" cy="17.5" r="2"/><circle cx="17.5" cy="17.5" r="2"/>');
+export const IconExternal = base('<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>');
 export const IconSparkle = base('<path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.9L12 18.5l-1.8-5.8-5.7-1.9L10.2 9z"/>');

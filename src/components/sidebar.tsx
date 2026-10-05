@@ -6,7 +6,7 @@ import { useState } from "react";
 import {
   IconAlert, IconClients, IconContacts, IconDashboard, IconExpiry, IconForecast,
   IconMenu, IconPlug, IconProduct, IconReports, IconRoute, IconSales, IconStore,
-  IconTeam, IconVisit, IconX,
+  IconTeam, IconTruck, IconVisit, IconX,
 } from "./icons";
 
 type Item = { section: string; href: string; label: string; Icon: typeof IconDashboard };
@@ -27,6 +27,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { section: "rutas", href: "/rutas", label: "Planificador de rutas", Icon: IconRoute },
       { section: "visitas", href: "/visitas", label: "Visitas", Icon: IconVisit },
       { section: "novedades", href: "/novedades", label: "Novedades", Icon: IconAlert },
+      { section: "guias", href: "/guias", label: "Guías de envío", Icon: IconTruck },
       { section: "equipo", href: "/equipo", label: "Equipo de campo", Icon: IconTeam },
     ],
   },

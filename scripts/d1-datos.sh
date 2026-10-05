@@ -14,7 +14,7 @@ OUT="$(mktemp -t fitt-d1).sql"
 # llaves foráneas por si algún ciclo se escapa a este orden.
 TABLES=(User Company Store Contact StoreAssignment Visit ShelfReport Incident
         Product Warehouse InventoryLot SalesOrder SalesOrderLine Invoice Forecast
-        ApiConnection ApiConnectionEvent)
+        Shipment ShipmentEvent ApiConnection ApiConnectionEvent)
 
 echo "PRAGMA defer_foreign_keys = true;" > "$OUT"
 for t in "${TABLES[@]}"; do

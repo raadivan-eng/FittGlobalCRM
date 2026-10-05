@@ -43,7 +43,7 @@ function resumen(name: string, state: ConnectionView) {
   return "guardado";
 }
 
-export function ConnectionCard({ provider, color, state }: { provider: Provider; color: string; state: ConnectionView }) {
+export function ConnectionCard({ provider, color, state, ready = true }: { provider: Provider; color: string; state: ConnectionView; ready?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [result, formAction] = useActionState<ConnectionState, FormData>(guardarConexion, {});
@@ -163,7 +163,14 @@ export function ConnectionCard({ provider, color, state }: { provider: Provider;
             )}
           </div>
 
-          <p className="mt-auto pt-1 font-mono text-[10.5px] leading-snug text-[var(--text-muted)]">{provider.endpoint}</p>
+          {ready ? (
+            provider.endpoint && <p className="mt-auto pt-1 font-mono text-[10.5px] leading-snug text-[var(--text-muted)]">{provider.endpoint}</p>
+          ) : (
+            <p className="mt-auto rounded-md border border-[var(--tone-info-bd)] bg-[var(--tone-info-bg)] px-2 py-1.5 text-[11.5px] leading-snug text-[var(--tone-info-fg)]">
+              Integración en preparación. Puedes dejar cargadas las credenciales; la prueba se habilita cuando el portal
+              tenga el adaptador de {provider.name}.
+            </p>
+          )}
 
           {confirming ? (
             <div className="flex flex-col gap-2 rounded-lg border border-[var(--tone-danger-bd)] bg-[var(--tone-danger-bg)] p-2.5">
@@ -187,7 +194,7 @@ export function ConnectionCard({ provider, color, state }: { provider: Provider;
                   pendingLabel="Probando…"
                   className="btn btn-primary !py-1 text-[12.5px]"
                   icon={<IconRefresh size={12} />}
-                  disabled={!configured}
+                  disabled={!configured || !ready}
                 />
               </form>
               <button type="button" className="btn btn-secondary !py-1 text-[12.5px]" onClick={() => setEditing(true)}>
