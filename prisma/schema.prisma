@@ -32,6 +32,7 @@ model User {
   accounts          Company[]         @relation("AccountOwner")
   forecasts         Forecast[]
   orders            SalesOrder[]
+  connectionEvents  ApiConnectionEvent[]
 
   @@index([role, active])
 }
@@ -69,16 +70,24 @@ model Company {
 }
 
 /// Punto de venta físico. Es la unidad que visita el mercaderista.
+/// El código es el que usa la cadena (Colsubsidio D002, Locatel E111…), así que
+/// sólo es único dentro de su cliente: Farmatodo y Olímpica repiten numeración.
 model Store {
   id              String   @id @default(cuid())
-  code            String   @unique
+  code            String
+  gln             String? // EAN localizador de la tienda, cuando la cadena lo publica
   name            String
   companyId       String
   address         String?
   city            String
+  department      String?
   zone            String // usada para agrupar rutas
-  lat             Float
-  lng             Float
+  lat             Float? // vacías hasta geocodificar la dirección: sin ellas la tienda no entra al ruteo
+  lng             Float?
+  geoStatus       String    @default("PENDIENTE") // PENDIENTE | UBICADA | POR_REVISAR | NO_ENCONTRADA | MANUAL
+  geoSource       String? // GEOCODING | PLACES | MANUAL
+  geoMatch        String? // qué encontró Google, para poder revisar el resultado
+  geocodedAt      DateTime?
   format          String // HIPERMERCADO | SUPERMERCADO | MINIMARKET | BODEGA | FARMACIA | MAYORISTA
   tier            String   @default("B") // A | B | C
   visitsPerMonth  Int      @default(2) // frecuencia objetivo de visita
@@ -86,6 +95,7 @@ model Store {
   openTime        String   @default("08:00")
   closeTime       String   @default("18:00")
   active          Boolean  @default(true)
+  inactiveReason  String? // por qué no se visita: centro de distribución, cerrada, «No aplica»…
   createdAt       DateTime @default(now())
 
   company     Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -95,8 +105,8 @@ model Store {
   incidents   Incident[]
   orders      SalesOrder[]
 
+  @@unique([companyId, code])
   @@index([zone, active])
-  @@index([companyId])
 }
 
 /// Persona de contacto. Siempre pertenece a una empresa y, opcionalmente, a una tienda concreta.
@@ -348,4 +358,43 @@ model Forecast {
   createdBy User     @relation(fields: [createdById], references: [id])
 
   @@index([period])
+}
+
+// ────────────────────────────  Conexiones vía API  ────────────────────────────
+
+/// Credenciales de un servicio externo (Siigo, Meta, Google). El catálogo de
+/// proveedores vive en src/lib/integrations.ts; aquí sólo se guarda el estado.
+/// Las credenciales viajan cifradas y nunca vuelven al navegador: la interfaz
+/// sólo muestra `secretHint`.
+model ApiConnection {
+  id           String    @id @default(cuid())
+  provider     String    @unique // SIIGO | META | GOOGLE
+  status       String    @default("SIN_CONFIGURAR") // SIN_CONFIGURAR | PENDIENTE | CONECTADA | ERROR
+  account      String? // identificador público de la cuenta: usuario, client id, id de negocio
+  secretCipher String? // resto de credenciales en JSON cifrado (AES-256-GCM)
+  secretHint   String? // últimos 4 caracteres de la credencial principal
+  lastCheckAt  DateTime?
+  lastDetail   String? // qué respondió el proveedor en la última prueba correcta
+  lastError    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  events ApiConnectionEvent[]
+}
+
+/// Bitácora de la conexión: cada guardado, prueba o desconexión deja rastro.
+model ApiConnectionEvent {
+  id           String   @id @default(cuid())
+  connectionId String
+  action       String // "Prueba de conexión", "Credenciales actualizadas"…
+  result       String // OK | FALLO | INFO
+  detail       String?
+  durationMs   Int?
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  connection ApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user       User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([connectionId, createdAt])
 }

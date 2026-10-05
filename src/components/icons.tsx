@@ -57,4 +57,7 @@ export const IconMail = base('<rect x="3" y="5" width="18" height="14" rx="2"/><
 export const IconTarget = base('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>');
 export const IconExpiry = base('<circle cx="12" cy="13" r="8"/><path d="M12 9v4.2l2.8 1.6"/><path d="M9 2.5h6"/><path d="m19.5 6.5 1.5-1.5"/>');
 export const IconBuilding = base('<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 7h2M14 7h2M8 11h2M14 11h2M8 15h2M14 15h2"/><path d="M10 21v-3h4v3"/>');
+export const IconPlug = base('<path d="M9 2v6M15 2v6"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2V22"/>');
+export const IconKey = base('<circle cx="8" cy="15" r="4"/><path d="m10.9 12.1 8-8"/><path d="m15.5 7.5 2 2"/><path d="m18.5 4.5 2 2"/>');
+export const IconRefresh = base('<path d="M3.5 12a8.5 8.5 0 0 1 14.6-5.9L21 9"/><path d="M21 4v5h-5"/><path d="M20.5 12a8.5 8.5 0 0 1-14.6 5.9L3 15"/><path d="M3 20v-5h5"/>');
 export const IconSparkle = base('<path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.9L12 18.5l-1.8-5.8-5.7-1.9L10.2 9z"/>');

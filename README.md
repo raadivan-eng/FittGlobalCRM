@@ -11,28 +11,56 @@ mayoría de las empresas viven en hojas de cálculo separadas:
 3. **Decisión comercial.** Forecast contra facturación, rankings de producto,
    cliente y tienda, cartera, y control de vencimientos por lote.
 
+A eso se suma la conexión con los servicios donde ya vive parte de esa
+información: el ERP contable, la plataforma de anuncios y la ofimática.
+
 ## Arranque
 
 ```bash
 npm install
 cp .env.example .env
-npm run db:reset   # crea el esquema y carga datos de demostración
+npm run db:init    # crea el esquema y deja la base lista para operar (sin datos)
 npm run dev        # http://localhost:3000
 ```
 
+`db:init` borra cualquier dato existente y deja sólo dos cosas: el usuario
+administrador que definas en el `.env` y las tres conexiones API en estado
+«sin configurar». Es el comando de puesta en producción.
+
+Para volver al entorno de demostración con 14 meses de historia inventada:
+`npm run db:reset`.
+
 > `.env` no está versionado. Antes de desplegar, genera un `SESSION_SECRET`
 > propio: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+> De ese secreto también se deriva la clave que cifra las credenciales de las
+> conexiones API: rotarlo obliga a volver a cargarlas.
 
-### Cuentas de demostración
+### Acceso
 
-Todas usan la contraseña `fitt2026`.
+`db:init` crea un único usuario, el administrador, a partir de tres variables
+del `.env`:
 
-| Correo | Rol | Qué ve |
-|---|---|---|
-| `comercial@fittglobal.com` | Comercial | Panel gerencial, forecast, resultados, clientes |
-| `ivan@fittglobal.com` | Administrador | Todo el portal |
-| `supervisor@fittglobal.com` | Supervisor de campo | Rutas, visitas, novedades, equipo |
-| `mercaderista@fittglobal.com` | Mercaderista | Su ruta del día, sus tiendas y sus novedades |
+```
+ADMIN_EMAIL="ivan@fittglobal.com"
+ADMIN_NAME="Deivan Rodríguez"
+ADMIN_PASSWORD="cambia-esta-clave"
+```
+
+Cambiar la clave es editar `ADMIN_PASSWORD` y volver a correr `npm run db:init`.
+El resto del equipo —comerciales, supervisores, mercaderistas— se da de alta
+desde la base; el portal todavía no tiene pantalla de creación de usuarios.
+
+`npm run db:reset` (demostración) crea en cambio diez cuentas de ejemplo, todas
+con la contraseña `fitt2026`: `comercial@`, `supervisor@`, `mercaderista@` y
+demás sobre el dominio `fittglobal.com`.
+
+### Cargar datos reales
+
+Las pantallas son de lectura: se editan forecast, novedades y visitas, pero
+todavía no hay formularios de alta de clientes, tiendas, productos ni pedidos, y
+las conexiones API sólo guardan y prueban credenciales —aún no sincronizan
+catálogos ni facturas—. Mientras esas dos piezas se construyen, la carga inicial
+se hace contra la base: `npm run db:studio`.
 
 ## El planificador de rutas
 
@@ -82,11 +110,41 @@ determina la acción:
 La vista por defecto muestra sólo lo accionable (≤ 90 días) y reporta el valor al
 costo en riesgo, desglosado por categoría y por bodega.
 
+## Conexiones vía API
+
+`/conexiones` —sólo para el administrador— guarda las credenciales de los tres
+servicios externos con los que trabaja la comercializadora:
+
+| Proveedor | Qué entra por ahí | Prueba de conexión |
+|---|---|---|
+| **Siigo** | Facturas, cartera y catálogo del ERP | `POST https://api.siigo.com/auth` |
+| **Meta** | Leads de campañas y WhatsApp Business | `GET https://graph.facebook.com/v21.0/me` |
+| **Google** | Sheets, Drive y Analytics | `POST https://oauth2.googleapis.com/token` |
+
+Dos decisiones sostienen el módulo:
+
+**Las credenciales no vuelven al navegador.** Se guardan cifradas con AES-256-GCM
+—clave derivada de `SESSION_SECRET` con scrypt, en
+[src/lib/secrets.ts](src/lib/secrets.ts)— y la interfaz sólo muestra los últimos
+cuatro caracteres de la principal. Editar un campo secreto y dejarlo vacío
+conserva el valor guardado en vez de borrarlo.
+
+**«Probar conexión» habla de verdad con el proveedor.** Pide un token a Siigo o a
+Google y consulta la cuenta del token en Meta; el estado que se ve en la tarjeta
+es el resultado de esa llamada, con el mensaje de error tal cual lo devolvió el
+servicio. Cada guardado, prueba y desconexión queda en la bitácora con su autor y
+la duración de la llamada, así que un fallo intermitente se puede reconstruir.
+
+El catálogo de proveedores vive en
+[src/lib/integrations.ts](src/lib/integrations.ts): añadir uno es sumar su
+descriptor y su saludo en `actions-integrations.ts`.
+
 ## Estructura
 
 ```
 prisma/
   schema.prisma        Modelo de datos (SQLite; los enums viven en src/lib/enums.ts)
+  seed-inicial.ts      Base de arranque para operar: administrador y nada más
   seed.ts              Datos de demostración deterministas (14 meses de historia)
 src/
   app/
@@ -97,6 +155,7 @@ src/
       rutas/  visitas/  novedades/  equipo/
       productos/  inventario/
       ventas/  forecast/  reportes/
+      conexiones/      Credenciales de Siigo, Meta y Google
   components/          UI, gráficos, mapa de ruta, filtros
   lib/
     routing.ts         Priorización y ruteo
@@ -104,6 +163,8 @@ src/
     field.ts           Señales de campo por tienda
     auth.ts            Sesión y permisos por rol
     enums.ts           Catálogos de estados con etiqueta y tono
+    integrations.ts    Catálogo de proveedores externos
+    secrets.ts         Cifrado de las credenciales de esas conexiones
 ```
 
 ## Decisiones técnicas
@@ -131,8 +192,9 @@ src/
 |---|---|
 | `npm run dev` | Servidor de desarrollo |
 | `npm run build` | Build de producción |
+| `npm run db:init` | Base de operación: borra todo y deja el administrador y las conexiones |
 | `npm run db:reset` | Recrea el esquema y resiembra los datos de demostración |
-| `npm run db:seed` | Sólo resiembra |
+| `npm run db:seed` | Sólo resiembra la demostración |
 | `npm run db:studio` | Prisma Studio para inspeccionar la base |
 
 > Los importes se muestran en dólares con formato local `es-CO`. Para cambiar de

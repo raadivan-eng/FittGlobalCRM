@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   IconAlert, IconClients, IconContacts, IconDashboard, IconExpiry, IconForecast,
-  IconMenu, IconProduct, IconReports, IconRoute, IconSales, IconStore, IconTeam,
-  IconVisit, IconX,
+  IconMenu, IconPlug, IconProduct, IconReports, IconRoute, IconSales, IconStore,
+  IconTeam, IconVisit, IconX,
 } from "./icons";
 
 type Item = { section: string; href: string; label: string; Icon: typeof IconDashboard };
@@ -43,6 +43,12 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { section: "ventas", href: "/ventas", label: "Ventas y facturación", Icon: IconSales },
       { section: "forecast", href: "/forecast", label: "Forecast", Icon: IconForecast },
       { section: "reportes", href: "/reportes", label: "Reportes", Icon: IconReports },
+    ],
+  },
+  {
+    title: "Sistema",
+    items: [
+      { section: "conexiones", href: "/conexiones", label: "Conexiones API", Icon: IconPlug },
     ],
   },
 ];

@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fitt-global-crm",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    // Autorreferencia que OpenNext usa para su caché; el nombre debe ser el del worker.
+    { "binding": "WORKER_SELF_REFERENCE", "service": "fitt-global-crm" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fitt-crm",
+      // Se completa con el id que imprime `wrangler d1 create fitt-crm`.
+      "database_id": "PENDIENTE",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // El dominio sólo funciona cuando fittglobal.com ya resuelve con los
+  // nameservers de Cloudflare.
+  "routes": [{ "pattern": "crm.fittglobal.com", "custom_domain": true }],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

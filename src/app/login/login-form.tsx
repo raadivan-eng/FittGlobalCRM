@@ -1,15 +1,8 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState } from "react";
 import { loginAction, type LoginState } from "@/lib/actions-auth";
 import { IconAlert, IconArrowRight, IconRoute, IconExpiry, IconForecast } from "@/components/icons";
-
-const DEMO = [
-  { email: "comercial@fittglobal.com", label: "Mariana Escobar", role: "Comercial", desc: "Forecast, resultados y cartera de clientes" },
-  { email: "ivan@fittglobal.com", label: "Deivan Rodríguez", role: "Administrador", desc: "Acceso completo al portal" },
-  { email: "supervisor@fittglobal.com", label: "Hernán Duque", role: "Supervisor de campo", desc: "Rutas, visitas y novedades" },
-  { email: "mercaderista@fittglobal.com", label: "Kevin Ospina", role: "Mercaderista", desc: "Su ruta del día y reportes de góndola" },
-];
 
 const HIGHLIGHTS = [
   { Icon: IconRoute, title: "Rutas con criterio", text: "El planificador ordena las visitas por urgencia real: frecuencia vencida, quiebres, novedades abiertas y peso en facturación." },
@@ -19,8 +12,6 @@ const HIGHLIGHTS = [
 
 export function LoginForm() {
   const [state, formAction, pending] = useActionState<LoginState, FormData>(loginAction, {});
-  const [email, setEmail] = useState("comercial@fittglobal.com");
-  const [password, setPassword] = useState("fitt2026");
 
   return (
     <main className="grid min-h-dvh lg:grid-cols-[1fr_minmax(420px,44%)]">
@@ -57,7 +48,7 @@ export function LoginForm() {
             ))}
           </ul>
         </div>
-        <p className="relative text-[12px] text-[var(--text-muted)]">Entorno de demostración con datos simulados.</p>
+        <p className="relative text-[12px] text-[var(--text-muted)]">Portal interno de Fitt Global. Acceso restringido al equipo.</p>
       </section>
 
       {/* Formulario */}
@@ -67,7 +58,7 @@ export function LoginForm() {
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--brand)] text-[15px] font-bold text-white">FG</span>
           </div>
           <h2 className="text-[21px] font-semibold tracking-[-0.015em]">Ingresar al portal</h2>
-          <p className="mt-1 text-[13px] text-[var(--text-secondary)]">Usa una de las cuentas de demostración para explorar cada rol.</p>
+          <p className="mt-1 text-[13px] text-[var(--text-secondary)]">Entra con tu correo corporativo. Lo que ves depende de tu rol.</p>
 
           <form action={formAction} className="mt-6 flex flex-col gap-3.5">
             <label className="flex flex-col gap-1.5">
@@ -77,9 +68,8 @@ export function LoginForm() {
                 type="email"
                 autoComplete="username"
                 required
+                autoFocus
                 className="field"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
               />
             </label>
 
@@ -91,8 +81,6 @@ export function LoginForm() {
                 autoComplete="current-password"
                 required
                 className="field"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
               />
             </label>
 
@@ -109,36 +97,9 @@ export function LoginForm() {
             </button>
           </form>
 
-          <div className="mt-7">
-            <p className="mb-2 text-[11.5px] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Cuentas de demostración</p>
-            <ul className="flex flex-col gap-1.5">
-              {DEMO.map((d) => (
-                <li key={d.email}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEmail(d.email);
-                      setPassword("fitt2026");
-                    }}
-                    className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
-                      email === d.email
-                        ? "border-[var(--brand)] bg-[var(--brand-soft)]"
-                        : "border-[var(--border)] bg-[var(--surface-1)] hover:bg-[var(--surface-2)]"
-                    }`}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="text-[13px] font-medium">{d.label}</span>
-                      <span className="text-[11px] text-[var(--text-muted)]">{d.role}</span>
-                    </span>
-                    <span className="mt-0.5 block text-[11.5px] text-[var(--text-secondary)]">{d.desc}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2.5 text-[11.5px] text-[var(--text-muted)]">
-              Contraseña para todas las cuentas: <code className="rounded bg-[var(--surface-2)] px-1 py-0.5 font-mono">fitt2026</code>
-            </p>
-          </div>
+          <p className="mt-6 text-[12px] leading-relaxed text-[var(--text-muted)]">
+            ¿Sin acceso o clave olvidada? El administrador del portal la restablece.
+          </p>
         </div>
       </section>
     </main>

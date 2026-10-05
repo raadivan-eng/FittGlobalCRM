@@ -101,9 +101,11 @@ export function GroupedBarChart({
   const pad = { top: 12, right: 8, bottom: 26, left: 52 };
   const plotW = Math.max(40, width - pad.left - pad.right);
   const plotH = height - pad.top - pad.bottom;
-  const max = Math.max(1, ...data.flatMap((d) => d.values));
-  const ticks = niceTicks(max);
-  const top = ticks[ticks.length - 1];
+  // Con toda la serie en cero no hay escala que dibujar: una única línea base
+  // evita un eje de etiquetas repetidas (US$ 0 · US$ 0 · US$ 1…).
+  const peak = Math.max(0, ...data.flatMap((d) => d.values));
+  const ticks = peak > 0 ? niceTicks(peak) : [0];
+  const top = ticks[ticks.length - 1] || 1;
 
   const slot = plotW / Math.max(1, data.length);
   const groupW = Math.min(slot * 0.68, 46);
@@ -212,9 +214,11 @@ export function LineChart({
   const pad = { top: 12, right: 12, bottom: 26, left: 52 };
   const plotW = Math.max(40, width - pad.left - pad.right);
   const plotH = height - pad.top - pad.bottom;
-  const max = Math.max(1, ...data.flatMap((d) => d.values));
-  const ticks = niceTicks(max);
-  const top = ticks[ticks.length - 1];
+  // Con toda la serie en cero no hay escala que dibujar: una única línea base
+  // evita un eje de etiquetas repetidas (US$ 0 · US$ 0 · US$ 1…).
+  const peak = Math.max(0, ...data.flatMap((d) => d.values));
+  const ticks = peak > 0 ? niceTicks(peak) : [0];
+  const top = ticks[ticks.length - 1] || 1;
   const stepX = data.length > 1 ? plotW / (data.length - 1) : 0;
 
   const px = (i: number) => pad.left + stepX * i;
@@ -370,6 +374,9 @@ export function CompositionBar({
 }) {
   const f = useFormatter(format);
   const total = segments.reduce((s, x) => s + x.value, 0);
+  if (!segments.length)
+    return <p className="px-4 py-8 text-center text-[13px] text-[var(--text-muted)]">Sin datos en el período</p>;
+
   return (
     <div>
       <div className="flex w-full gap-[2px] overflow-hidden rounded-full" style={{ height }}>

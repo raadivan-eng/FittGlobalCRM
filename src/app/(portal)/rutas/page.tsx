@@ -41,7 +41,11 @@ export default async function RutasPage({ searchParams }: { searchParams: SP }) 
   const today = new Date();
   const dateStr = one(sp.fecha) ?? today.toISOString().slice(0, 10);
 
-  const candidates = await loadStoresForRouting({ userId: selectedId });
+  const [candidates, unlocated] = await Promise.all([
+    loadStoresForRouting({ userId: selectedId }),
+    // El planificador sólo ve tiendas con coordenadas; las demás esperan geocodificación.
+    prisma.store.count({ where: { active: true, lat: null, assignments: { some: { userId: selectedId } } } }),
+  ]);
   const zones = [...new Set(candidates.map((c) => c.zone))].sort();
   const filtered = zone ? candidates.filter((c) => c.zone === zone) : candidates;
 
@@ -79,7 +83,20 @@ export default async function RutasPage({ searchParams }: { searchParams: SP }) 
 
       <RouteControls team={team} selectedId={selectedId} lockTeam={isField} hours={hours} maxStops={maxStops} zone={zone} zones={zones} date={dateStr} />
 
-      {candidates.length === 0 ? (
+      {candidates.length === 0 && unlocated > 0 ? (
+        <Card>
+          <EmptyState
+            icon={<IconPin size={26} />}
+            title="Tiendas sin ubicar"
+            description={`${fmtNumber(unlocated)} tiendas asignadas a este mercaderista todavía no tienen coordenadas. Hasta geocodificar sus direcciones no se puede calcular la ruta.`}
+            action={
+              <Link href="/tiendas?ubicacion=sin" className="btn btn-secondary">
+                Ver tiendas sin ubicar
+              </Link>
+            }
+          />
+        </Card>
+      ) : candidates.length === 0 ? (
         <Card>
           <EmptyState
             icon={<IconRoute size={26} />}

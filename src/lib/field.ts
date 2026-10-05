@@ -20,7 +20,8 @@ export async function loadStoresForRouting(
   const assignments = await prisma.storeAssignment.findMany({
     where: {
       ...(opts.userId ? { userId: opts.userId } : {}),
-      store: { active: true, ...(opts.storeIds ? { id: { in: opts.storeIds } } : {}) },
+      // Sin coordenadas no hay forma de calcular traslados: la tienda espera a ser geocodificada.
+      store: { active: true, lat: { not: null }, lng: { not: null }, ...(opts.storeIds ? { id: { in: opts.storeIds } } : {}) },
     },
     include: { store: { include: { company: { select: { id: true, name: true } } } } },
   });
@@ -101,8 +102,8 @@ export async function loadStoresForRouting(
       code: store.code,
       name: store.name,
       companyName: store.company.name,
-      lat: store.lat,
-      lng: store.lng,
+      lat: store.lat!,
+      lng: store.lng!,
       zone: store.zone,
       city: store.city,
       tier: store.tier,

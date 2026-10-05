@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { PROVIDER_KEYS } from "../src/lib/integrations";
 
 const prisma = new PrismaClient();
 
@@ -120,6 +121,8 @@ const INCIDENT_TEMPLATES = [
 async function main() {
   console.log("🧹 Limpiando base…");
   await prisma.$transaction([
+    prisma.apiConnectionEvent.deleteMany(),
+    prisma.apiConnection.deleteMany(),
     prisma.shelfReport.deleteMany(),
     prisma.incident.deleteMany(),
     prisma.visit.deleteMany(),
@@ -306,7 +309,7 @@ async function main() {
           closeTime: pick(["18:00", "19:00", "20:00", "21:00"]),
         },
       });
-      stores.push({ id: store.id, companyId: company.id, tier, city: c.city, zone, lat: store.lat, lng: store.lng });
+      stores.push({ id: store.id, companyId: company.id, tier, city: c.city, zone, lat: store.lat!, lng: store.lng! });
 
       // Contacto de tienda
       if (chance(0.75)) {
@@ -411,8 +414,8 @@ async function main() {
           status,
           checkInAt: checkIn,
           checkOutAt: checkIn && duration ? new Date(checkIn.getTime() + duration * 60000) : null,
-          checkInLat: checkIn ? a.store.lat + (rnd() - 0.5) * 0.0008 : null,
-          checkInLng: checkIn ? a.store.lng + (rnd() - 0.5) * 0.0008 : null,
+          checkInLat: checkIn ? a.store.lat! + (rnd() - 0.5) * 0.0008 : null,
+          checkInLng: checkIn ? a.store.lng! + (rnd() - 0.5) * 0.0008 : null,
           durationMinutes: duration,
           objective: pick(["Revisión de góndola y reposición", "Auditoría de precios y planograma", "Chequeo de vencimientos", "Levantamiento de quiebres", "Montaje de exhibición adicional"]),
           summary: status === "COMPLETADA" ? pick(["Góndola repuesta, sin novedades mayores.", "Se detectaron quiebres y se escaló al comprador.", "Planograma corregido durante la visita.", "Rotación de lotes próximos a vencer ejecutada.", "Cliente solicita material POP adicional."]) : status === "NO_REALIZADA" ? pick(["Punto cerrado al momento de la visita.", "Encargado no disponible, se reprograma.", "Acceso restringido por inventario del cliente."]) : null,
@@ -655,6 +658,14 @@ async function main() {
     const tier = share <= 0.7 ? "A" : share <= 0.9 ? "B" : "C";
     await prisma.company.update({ where: { id: row.id }, data: { tier } });
   }
+  // ── Conexiones externas ────────────────────────────────────────────────────
+  // Se crean vacías a propósito: las credenciales reales las carga el
+  // administrador desde /conexiones. El seed no inventa tokens.
+  await prisma.apiConnection.createMany({
+    data: PROVIDER_KEYS.map((provider) => ({ provider, status: "SIN_CONFIGURAR" })),
+  });
+  console.log(`🔌 ${PROVIDER_KEYS.length} conexiones API listas para configurar`);
+
   console.log("🅰️  Clasificación ABC recalculada");
 
   console.log(`\n✅ Base lista. Acceso: ivan@fittglobal.com / fitt2026 (usuarios: ${users.map((u) => u.email).join(", ")})`);

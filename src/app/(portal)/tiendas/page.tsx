@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { STORE_FORMATS, TIERS } from "@/lib/enums";
+import { GEO_STATUS, STORE_FORMATS, TIERS } from "@/lib/enums";
 import { fmtNumber, relativeDays } from "@/lib/format";
 import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
-import { IconStore } from "@/components/icons";
+import { IconPin, IconPlus, IconStore } from "@/components/icons";
 
 export const metadata = { title: "Tiendas" };
 export const dynamic = "force-dynamic";
@@ -20,20 +20,24 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
   const format = one(sp.formato);
   const tier = one(sp.tier);
   const companyId = one(sp.cliente);
+  const estado = one(sp.estado);
+  const ubicacion = one(sp.ubicacion);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   // Un mercaderista sólo ve su propia cartera de puntos de venta.
   const scopedToUser = user.role === "MERCADERISTA" ? { assignments: { some: { userId: user.id } } } : {};
 
   const where = {
-    active: true,
+    active: estado !== "inactivas",
     ...scopedToUser,
     ...(q ? { OR: [{ name: { contains: q } }, { code: { contains: q } }, { address: { contains: q } }] } : {}),
     ...(zone ? { zone } : {}),
     ...(format ? { format } : {}),
     ...(tier ? { tier } : {}),
     ...(companyId ? { companyId } : {}),
+    ...(ubicacion === "sin" ? { lat: null } : ubicacion === "con" ? { lat: { not: null } } : {}),
   };
+  const canImport = ["ADMIN", "SUPERVISOR"].includes(user.role);
 
   const [stores, total, zones, companies] = await Promise.all([
     prisma.store.findMany({
@@ -67,7 +71,21 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
       <PageHeader
         title="Tiendas"
         subtitle="Puntos de venta donde el producto llega a la góndola. Cada uno pertenece a un cliente y tiene una frecuencia de visita comprometida."
-        actions={<span className="badge badge-neutral">{fmtNumber(total)} activas</span>}
+        actions={
+          <>
+            <span className="badge badge-neutral">{fmtNumber(total)} {estado === "inactivas" ? "no visitables" : "activas"}</span>
+            {canImport && (
+              <>
+                <Link href="/tiendas/ubicar" className="btn btn-secondary">
+                  <IconPin size={14} /> Ubicar en el mapa
+                </Link>
+                <Link href="/tiendas/importar" className="btn btn-secondary">
+                  <IconPlus size={14} /> Importar desde Excel
+                </Link>
+              </>
+            )}
+          </>
+        }
       />
 
       <Filters
@@ -77,6 +95,8 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
           { type: "select", name: "formato", label: "Formato", options: STORE_FORMATS.options.map((o) => ({ value: o.value, label: o.label })) },
           { type: "select", name: "tier", label: "ABC", options: TIERS.options.map((o) => ({ value: o.value, label: o.label })) },
           { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-52" },
+          { type: "select", name: "ubicacion", label: "Ubicación", options: [{ value: "con", label: "Con coordenadas" }, { value: "sin", label: "Sin ubicar" }] },
+          { type: "select", name: "estado", label: "Estado", options: [{ value: "inactivas", label: "No visitables" }] },
         ]}
       />
 
@@ -112,7 +132,10 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
                           <Link href={`/tiendas/${s.id}`} className="font-medium hover:text-[var(--brand)] hover:underline">
                             {s.name}
                           </Link>
-                          <p className="text-[11.5px] text-[var(--text-muted)]">{s.code} · {s.city}</p>
+                          <p className="text-[11.5px] text-[var(--text-muted)]">
+                            {s.code} · {s.city}
+                            {s.inactiveReason ? ` · ${s.inactiveReason}` : s.lat == null ? ` · ${GEO_STATUS.label(s.geoStatus).toLowerCase()}` : ""}
+                          </p>
                         </td>
                         <td>
                           <Link href={`/clientes/${s.company.id}`} className="text-[var(--text-secondary)] hover:text-[var(--brand)] hover:underline">

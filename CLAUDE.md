@@ -54,8 +54,13 @@ las vistas sean compartibles. Usa `<Filters>` y los helpers de
 ## Al tocar el modelo de datos
 
 ```bash
-npm run db:reset   # aplica el esquema y resiembra
+npm run db:reset   # aplica el esquema y resiembra la demostración
+npm run db:init    # aplica el esquema y deja la base de operación (admin + conexiones)
 ```
+
+Hay dos seeds y los dos deben seguir el cambio: `prisma/seed.ts` (demostración)
+y `prisma/seed-inicial.ts` (base limpia). Si añades una entidad, súmala al
+`deleteMany` de ambos.
 
 **Detén el dev server antes de resembrar.** `db:reset` borra el archivo SQLite;
 un `next dev` vivo conserva el descriptor del archivo eliminado y a partir de ahí
@@ -65,6 +70,24 @@ errores que no están en el código.
 El seed es determinista (PRNG con semilla fija) y genera 14 meses de historia
 relativa a la fecha de ejecución. Si añades una entidad, súmala al `deleteMany`
 del bloque de limpieza para que el reseed siga siendo idempotente.
+
+## Producción: Cloudflare Workers + D1
+
+Se despliega con OpenNext (`npm run deploy`) en `crm.fittglobal.com`. Requiere
+Node 22 (`nvm use`, ver `.nvmrc`). En local nada cambia: `next dev` y las seeds
+usan `prisma/dev.db`; desplegado, [src/lib/prisma.ts](src/lib/prisma.ts) usa el
+binding `DB` de D1.
+
+- **D1 no tiene transacciones.** `$transaction` corre como consultas sueltas:
+  lo que se escriba ahí debe poder repetirse sin daño.
+- **Cambios de esquema:** además de `db:push` en local, genera una migración
+  nueva en `migrations/` y aplícala con `npm run d1:migrate`:
+  `npx prisma migrate diff --from-local-d1 --to-schema-datamodel prisma/schema.prisma --script > migrations/000N_descripcion.sql`
+- **Secretos** (`SESSION_SECRET`) con `npx wrangler secret put`, nunca en
+  `wrangler.jsonc`. En local, `npm run preview` los lee de `.dev.vars`.
+- `npm run preview` prueba el build real en el runtime de Workers contra una D1
+  local (`wrangler d1 migrations apply fitt-crm --local` y
+  `D1_DESTINO=--local npm run d1:datos` para cargarla).
 
 ## Antes de dar algo por terminado
 

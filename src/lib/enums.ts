@@ -57,6 +57,7 @@ export const STORE_FORMATS = catalog([
   { value: "BODEGA", label: "Bodega", tone: "neutral" },
   { value: "FARMACIA", label: "Farmacia", tone: "purple" },
   { value: "MAYORISTA", label: "Mayorista", tone: "warning" },
+  { value: "ESPECIALIZADA", label: "Tienda especializada", tone: "success", hint: "Naturistas, tiendas fitness y canal tienda a tienda" },
 ] as const);
 
 export const VISIT_STATUS = catalog([
@@ -111,6 +112,29 @@ export const LOT_STATUS = catalog([
   { value: "LIQUIDACION", label: "En liquidación", tone: "warning" },
   { value: "BLOQUEADO", label: "Bloqueado", tone: "danger" },
   { value: "MERMA", label: "Merma", tone: "neutral" },
+] as const);
+
+export const CONNECTION_STATUS = catalog([
+  { value: "CONECTADA", label: "Conectada", tone: "success", hint: "La última prueba contra el proveedor respondió bien" },
+  { value: "PENDIENTE", label: "Sin verificar", tone: "warning", hint: "Hay credenciales guardadas que nadie ha probado todavía" },
+  { value: "ERROR", label: "Con error", tone: "danger", hint: "El proveedor rechazó las credenciales en la última prueba" },
+  { value: "SIN_CONFIGURAR", label: "Sin configurar", tone: "neutral", hint: "Todavía no se han cargado credenciales" },
+] as const);
+
+/** Estado de la geocodificación de una tienda. Sin coordenadas no entra a las rutas. */
+export const GEO_STATUS = catalog([
+  { value: "UBICADA", label: "Ubicada", tone: "success", hint: "Google la encontró con precisión de dirección o por el nombre de la tienda" },
+  { value: "MANUAL", label: "Verificada", tone: "success", hint: "Ubicación fijada o confirmada a mano" },
+  { value: "POR_REVISAR", label: "Por revisar", tone: "warning", hint: "Hay coordenadas, pero Google no está seguro: conviene confirmarlas" },
+  { value: "NO_ENCONTRADA", label: "No encontrada", tone: "danger", hint: "Sin coordenadas: falta dirección o Google no la encontró en la ciudad" },
+  { value: "PENDIENTE", label: "Pendiente", tone: "neutral", hint: "Todavía no se ha geocodificado" },
+] as const);
+
+/** Resultado de cada entrada de la bitácora de una conexión. */
+export const CONNECTION_EVENTS = catalog([
+  { value: "OK", label: "Correcto", tone: "success" },
+  { value: "FALLO", label: "Fallo", tone: "danger" },
+  { value: "INFO", label: "Cambio", tone: "info" },
 ] as const);
 
 /** Semáforo de vencimiento: la regla de negocio que ordena todo el módulo de inventario. */

@@ -4,16 +4,13 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import crypto from "node:crypto";
 import { prisma } from "./prisma";
+import { sessionSecret } from "./secrets";
 
 const COOKIE = "fitt_session";
 const MAX_AGE_SECONDS = 60 * 60 * 12;
 
-function secret() {
-  return process.env.SESSION_SECRET ?? "fitt-global-crm-insecure-fallback";
-}
-
 function sign(payload: string) {
-  return crypto.createHmac("sha256", secret()).update(payload).digest("base64url");
+  return crypto.createHmac("sha256", sessionSecret()).update(payload).digest("base64url");
 }
 
 export function createSessionToken(userId: string) {
@@ -91,7 +88,7 @@ export async function clearSessionCookie() {
 
 /** Qué secciones ve cada rol. Se usa tanto en el menú como en los guards de página. */
 export const ACCESS: Record<string, string[]> = {
-  ADMIN: ["dashboard", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "productos", "inventario", "ventas", "forecast", "reportes"],
+  ADMIN: ["dashboard", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "productos", "inventario", "ventas", "forecast", "reportes", "conexiones"],
   COMERCIAL: ["dashboard", "clientes", "contactos", "tiendas", "rutas", "visitas", "novedades", "productos", "inventario", "ventas", "forecast", "reportes"],
   SUPERVISOR: ["dashboard", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "productos", "inventario"],
   MERCADERISTA: ["dashboard", "tiendas", "rutas", "visitas", "novedades", "productos"],

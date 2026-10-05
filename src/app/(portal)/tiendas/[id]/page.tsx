@@ -5,7 +5,7 @@ import { requireSection } from "@/lib/auth";
 import { NOT_VOID, startOfMonth } from "@/lib/analytics";
 import { loadStoresForRouting } from "@/lib/field";
 import { scoreStores } from "@/lib/routing";
-import { INCIDENT_TYPES, SEVERITIES, STORE_FORMATS, TIERS, VISIT_STATUS } from "@/lib/enums";
+import { INCIDENT_TYPES, SEVERITIES, STORE_FORMATS, TIERS, VISIT_STATUS, GEO_STATUS } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtMoneyPrecise, fmtNumber, relativeDays } from "@/lib/format";
 import { Card, CardHeader, EnumBadge, KeyValue, PageHeader, StatTile } from "@/components/ui";
 import { ScoreBadge } from "@/components/score-badge";
@@ -113,7 +113,10 @@ export default async function TiendaDetalle({ params }: { params: Promise<{ id: 
               <KeyValue label="Dirección">{store.address ?? "—"}</KeyValue>
               <KeyValue label="Horario">{store.openTime} – {store.closeTime}</KeyValue>
               <KeyValue label="Duración media de visita">{store.avgVisitMinutes} min</KeyValue>
-              <KeyValue label="Coordenadas">{store.lat.toFixed(4)}, {store.lng.toFixed(4)}</KeyValue>
+              <KeyValue label="Coordenadas">
+                {store.lat != null && store.lng != null ? `${store.lat.toFixed(4)}, ${store.lng.toFixed(4)} · ` : ""}
+                {GEO_STATUS.label(store.geoStatus)}
+              </KeyValue>
               <KeyValue label="Canal del cliente">{store.company.channel}</KeyValue>
               <KeyValue label="Frecuencia">{store.visitsPerMonth} visitas/mes</KeyValue>
             </dl>

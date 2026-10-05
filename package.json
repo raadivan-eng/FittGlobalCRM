@@ -9,13 +9,22 @@
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:init": "prisma db push && tsx prisma/seed-inicial.ts",
     "db:reset": "rm -f prisma/dev.db && prisma db push && tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "d1:migrate": "wrangler d1 migrations apply fitt-crm --remote",
+    "d1:datos": "bash scripts/d1-datos.sh"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "1.20.8",
+    "@prisma/adapter-d1": "6.19.3",
     "@prisma/client": "6.19.3",
     "bcryptjs": "3.0.2",
-    "next": "15.5.24",
+    "exceljs": "4.4.0",
+    "next": "15.5.27",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
@@ -30,6 +39,7 @@
     "prisma": "6.19.3",
     "tailwindcss": "4.3.3",
     "tsx": "4.20.6",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "wrangler": "^4.147.0"
   }
 }
