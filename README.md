@@ -151,6 +151,37 @@ empresa con las tiendas y los contactos del lead que se elijan (al menos uno de
 cada), cada contacto vinculado a cada tienda, y el valor pasa a forecast manual
 del cliente nuevo para ese mes, así el total no cae al ganarse.
 
+## Trade: sell-out y actividades
+
+Dos pantallas para saber si lo que vendemos sale de la góndola y si lo que se
+pacta con las cadenas de verdad se ve en la tienda (ADMIN y COMERCIAL editan;
+SUPERVISOR consulta y verifica en tienda).
+
+**Sell out** (`/sell-out`) es la venta al consumidor por tienda, producto y mes
+(`SellOut`). Llega en el Excel que se descarga de los portales —puede ser la hoja
+«SELL OUT» completa, una pestaña por cadena— desde `/sell-out/importar`.
+[src/lib/sell-out-import.ts](src/lib/sell-out-import.ts) reconoce las columnas
+de cada portal por su encabezado, asigna la pestaña al cliente por la marca de
+su nombre, casa la tienda por el código de la cadena y el producto por EAN o,
+si el EAN viene dañado, por el código propio de la cadena (`ProductAlias`, que se
+aprende solo o se fija una vez). Cargar un mes de un cliente reemplaza ese mes.
+Cuando los portales abran API, su adaptador entregará las mismas filas.
+
+La medida común es la unidad: el valor de cada portal no se puede sumar entre
+cadenas, así que el dinero se muestra a precio de lista. La pantalla compara
+sell-in (unidades facturadas) contra sell-out, calcula el sell-through de 3
+meses y lista las tiendas que vendían y dejaron de rotar: casi siempre es quiebre.
+
+**Actividades de trade** (`/trade`): promociones, activaciones, exhibiciones,
+material POP… con su mecánica, fechas, inversión y productos. Cada tienda donde
+debe verse queda «por verificar» (`TradeExecution`) hasta que alguien la marca
+implementada, parcial o no implementada. El detalle mide el efecto con el
+sell-out: unidades por tienda de los productos de la actividad, tres meses antes
+contra los meses de vigencia, en las tiendas que la implementaron frente al
+resto del cliente. La diferencia entre las dos variaciones descuenta la
+temporada. La ficha de cada tienda muestra lo vigente y sus últimos seis meses
+de sell-out.
+
 ## Control de vencimientos
 
 El inventario se maneja por **lote**, no por SKU agregado, porque la decisión

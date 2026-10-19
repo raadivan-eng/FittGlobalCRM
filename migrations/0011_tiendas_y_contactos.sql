@@ -2,6 +2,40 @@
 -- varias de sus tiendas (StoreContact reemplaza a Contact.storeId). Un lead
 -- nace con al menos una tienda (LeadStore) y un contacto (LeadContact), que
 -- reemplazan los campos sueltos del lead y pasan al cliente al convertirlo.
+--
+-- D1 aplica las claves foráneas siempre: un DROP TABLE ejecuta los ON DELETE
+-- CASCADE de quien apunte a la tabla. Por eso Contact se reconstruye antes de
+-- que StoreContact y LeadContact la referencien, y a Lead (de la que cuelga
+-- LeadEvent) sólo se le quitan columnas, sin recrearla.
+
+-- Los vínculos contacto–tienda se apartan antes de reconstruir Contact.
+CREATE TABLE "_ContactStore" AS
+SELECT "storeId", "id" AS "contactId", "createdAt" FROM "Contact" WHERE "storeId" IS NOT NULL;
+
+-- RedefineTables
+PRAGMA defer_foreign_keys=ON;
+PRAGMA foreign_keys=OFF;
+CREATE TABLE "new_Contact" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "firstName" TEXT NOT NULL,
+    "lastName" TEXT NOT NULL,
+    "email" TEXT,
+    "phone" TEXT,
+    "position" TEXT NOT NULL,
+    "companyId" TEXT NOT NULL,
+    "isPrimary" BOOLEAN NOT NULL DEFAULT false,
+    "isDecisionMaker" BOOLEAN NOT NULL DEFAULT false,
+    "notes" TEXT,
+    "lastContactAt" DATETIME,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Contact_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+INSERT INTO "new_Contact" ("companyId", "createdAt", "email", "firstName", "id", "isDecisionMaker", "isPrimary", "lastContactAt", "lastName", "notes", "phone", "position") SELECT "companyId", "createdAt", "email", "firstName", "id", "isDecisionMaker", "isPrimary", "lastContactAt", "lastName", "notes", "phone", "position" FROM "Contact";
+DROP TABLE "Contact";
+ALTER TABLE "new_Contact" RENAME TO "Contact";
+CREATE INDEX "Contact_companyId_idx" ON "Contact"("companyId");
+PRAGMA foreign_keys=ON;
+PRAGMA defer_foreign_keys=OFF;
 
 -- CreateTable
 CREATE TABLE "StoreContact" (
@@ -46,11 +80,11 @@ CREATE TABLE "LeadContact" (
     CONSTRAINT "LeadContact_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
--- Datos: se copian antes de redefinir las tablas, mientras existen las columnas viejas.
-
+-- Datos: se copian mientras existen las columnas viejas del lead.
 -- Cada contacto que estaba en una tienda queda vinculado a ella.
 INSERT INTO "StoreContact" ("storeId", "contactId", "createdAt")
-SELECT "storeId", "id", "createdAt" FROM "Contact" WHERE "storeId" IS NOT NULL;
+SELECT "storeId", "contactId", "createdAt" FROM "_ContactStore";
+DROP TABLE "_ContactStore";
 
 -- Cada lead conserva su tienda con lo que tenía; la de un lead ya convertido
 -- apunta a la tienda 001 que creó la conversión.
@@ -67,62 +101,19 @@ SELECT 'lc-' || "id", "id", COALESCE("contactName", "name"), NULL, "phone", "ema
        "createdAt"
 FROM "Lead";
 
--- RedefineTables
-PRAGMA defer_foreign_keys=ON;
-PRAGMA foreign_keys=OFF;
-CREATE TABLE "new_Contact" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "firstName" TEXT NOT NULL,
-    "lastName" TEXT NOT NULL,
-    "email" TEXT,
-    "phone" TEXT,
-    "position" TEXT NOT NULL,
-    "companyId" TEXT NOT NULL,
-    "isPrimary" BOOLEAN NOT NULL DEFAULT false,
-    "isDecisionMaker" BOOLEAN NOT NULL DEFAULT false,
-    "notes" TEXT,
-    "lastContactAt" DATETIME,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "Contact_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-);
-INSERT INTO "new_Contact" ("companyId", "createdAt", "email", "firstName", "id", "isDecisionMaker", "isPrimary", "lastContactAt", "lastName", "notes", "phone", "position") SELECT "companyId", "createdAt", "email", "firstName", "id", "isDecisionMaker", "isPrimary", "lastContactAt", "lastName", "notes", "phone", "position" FROM "Contact";
-DROP TABLE "Contact";
-ALTER TABLE "new_Contact" RENAME TO "Contact";
-CREATE INDEX "Contact_companyId_idx" ON "Contact"("companyId");
-CREATE TABLE "new_Lead" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "code" TEXT NOT NULL,
-    "entry" TEXT NOT NULL,
-    "source" TEXT NOT NULL,
-    "sourceDetail" TEXT,
-    "externalId" TEXT,
-    "status" TEXT NOT NULL DEFAULT 'NUEVO',
-    "temperature" TEXT NOT NULL DEFAULT 'FRIO',
-    "name" TEXT NOT NULL,
-    "closePeriod" TEXT,
-    "expectedValue" REAL,
-    "lostReason" TEXT,
-    "notes" TEXT,
-    "ownerId" TEXT,
-    "createdById" TEXT,
-    "companyId" TEXT,
-    "convertedAt" DATETIME,
-    "lastActivityAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "Lead_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT "Lead_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT "Lead_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-);
-INSERT INTO "new_Lead" ("closePeriod", "code", "companyId", "convertedAt", "createdAt", "createdById", "entry", "expectedValue", "externalId", "id", "lastActivityAt", "lostReason", "name", "notes", "ownerId", "source", "sourceDetail", "status", "temperature", "updatedAt") SELECT "closePeriod", "code", "companyId", "convertedAt", "createdAt", "createdById", "entry", "expectedValue", "externalId", "id", "lastActivityAt", "lostReason", "name", "notes", "ownerId", "source", "sourceDetail", "status", "temperature", "updatedAt" FROM "Lead";
-DROP TABLE "Lead";
-ALTER TABLE "new_Lead" RENAME TO "Lead";
-CREATE UNIQUE INDEX "Lead_code_key" ON "Lead"("code");
-CREATE INDEX "Lead_status_temperature_idx" ON "Lead"("status", "temperature");
-CREATE INDEX "Lead_closePeriod_idx" ON "Lead"("closePeriod");
-CREATE INDEX "Lead_externalId_idx" ON "Lead"("externalId");
-PRAGMA foreign_keys=ON;
-PRAGMA defer_foreign_keys=OFF;
+-- Lead pierde los campos sueltos sin recrearse (recrearla borraría LeadEvent).
+DROP INDEX "Lead_phone_idx";
+DROP INDEX "Lead_placeId_idx";
+ALTER TABLE "Lead" DROP COLUMN "contactName";
+ALTER TABLE "Lead" DROP COLUMN "phone";
+ALTER TABLE "Lead" DROP COLUMN "email";
+ALTER TABLE "Lead" DROP COLUMN "city";
+ALTER TABLE "Lead" DROP COLUMN "address";
+ALTER TABLE "Lead" DROP COLUMN "format";
+ALTER TABLE "Lead" DROP COLUMN "lat";
+ALTER TABLE "Lead" DROP COLUMN "lng";
+ALTER TABLE "Lead" DROP COLUMN "placeId";
+ALTER TABLE "Lead" DROP COLUMN "mapsUrl";
 
 -- CreateIndex
 CREATE INDEX "StoreContact_contactId_idx" ON "StoreContact"("contactId");
@@ -141,4 +132,3 @@ CREATE INDEX "LeadContact_phone_idx" ON "LeadContact"("phone");
 
 -- CreateIndex
 CREATE INDEX "LeadContact_email_idx" ON "LeadContact"("email");
-

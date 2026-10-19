@@ -142,7 +142,7 @@ export default async function TradePage({ searchParams }: { searchParams: Search
                           </Link>
                           {a.mechanic && <p className="mt-0.5 text-[12.5px] text-[var(--text-secondary)]">{a.mechanic}</p>}
                           <p className="mt-1 text-[11.5px] text-[var(--text-muted)]">
-                            {a.company.name} · {fmtDate(a.startDate)} – {fmtDate(a.endDate)} · {a._count.products ? `${a._count.products} productos` : "Todo el portafolio"}
+                            {a.company.name} · {fmtDate(a.startDate)} – {fmtDate(a.endDate)} · {a._count.products ? `${a._count.products} producto${a._count.products === 1 ? "" : "s"}` : "Todo el portafolio"}
                             {a.budget ? ` · ${fmtCompact(a.budget)}` : ""}
                             {a.owner ? ` · ${a.owner.name}` : ""}
                           </p>

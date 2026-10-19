@@ -23,6 +23,16 @@ const SERIES = [
 
 const WINDOW = 12;
 
+/** «sept 2025 – sept 2026 (13 meses)» si son seguidos; si no, la lista. */
+function periodRange(periods: string[]) {
+  const sorted = [...periods].sort();
+  if (sorted.length < 3) return sorted.map(fmtPeriod).join(", ");
+  const contiguous = sorted.every((p, i) => i === 0 || addMonths(sorted[i - 1], 1) === p);
+  return contiguous
+    ? `${fmtPeriod(sorted[0])} – ${fmtPeriod(sorted[sorted.length - 1])} (${sorted.length} meses)`
+    : sorted.map(fmtPeriod).join(", ");
+}
+
 export default async function SellOutPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireSection("sellout");
   const sp = await searchParams;
@@ -165,7 +175,7 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
       <Filters
         fields={[
           { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-64" },
-          { type: "select", name: "mes", label: `Último mes (${fmtPeriod(available[0])})`, options: pageMonths.map((p) => ({ value: p, label: fmtPeriod(p) })), width: "w-56" },
+          { type: "select", name: "mes", label: "Último mes cargado", options: pageMonths.map((p) => ({ value: p, label: fmtPeriod(p) })), width: "w-56" },
         ]}
       />
 
@@ -189,13 +199,13 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
       </div>
 
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-2">
-        <Card>
+        <Card className="min-w-0">
           <CardHeader title="Unidades vendidas al consumidor" subtitle={`Últimos ${WINDOW} meses${companyId ? "" : " por cliente"}`} />
           <div className="px-4 py-3">
             <LineChart data={lineData} series={lineSeries} format="number" area={false} />
           </div>
         </Card>
-        <Card>
+        <Card className="min-w-0">
           <CardHeader
             title="Sell-in frente a sell-out"
             subtitle="Unidades que facturamos contra unidades que salieron de la góndola. Si el sell-in corre por encima varios meses, el inventario se acumula en la cadena."
@@ -338,7 +348,7 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
                 <div className="min-w-0">
                   <p className="font-medium">
                     {i.company.name}
-                    <span className="font-normal text-[var(--text-muted)]"> · {i.periods.split(",").map(fmtPeriod).join(", ")}</span>
+                    <span className="font-normal text-[var(--text-muted)]"> · {periodRange(i.periods.split(","))}</span>
                   </p>
                   <p className="text-[11.5px] text-[var(--text-muted)]">
                     {i.fileName ?? "API"}{i.sheet ? ` › ${i.sheet}` : ""} · {i.user?.name ?? "Sistema"} · {fmtDateTime(i.createdAt)}

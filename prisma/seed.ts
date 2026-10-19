@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Product } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { CARRIERS, PROVIDER_KEYS } from "../src/lib/integrations";
 
@@ -196,7 +196,7 @@ async function main() {
   console.log(`👤 ${users.length} usuarios`);
 
   // ── Productos y bodegas ────────────────────────────────────────────────────
-  const products = [];
+  const products: Product[] = [];
   for (const p of PRODUCTS) {
     products.push(
       await prisma.product.create({
@@ -911,8 +911,8 @@ async function main() {
   const bySku = (prefix: string) => products.filter((p) => p.sku.startsWith(prefix)).map((p) => p.id);
 
   const TRADE_SPECS = [
-    { type: "PROMOCION", title: "Regreso a clases — jugos Frutal", mechanic: "Pague 2 lleve 3 en jugos Frutal 1 L", skus: "BEB-02", from: [-6, 1], to: [-5, 31], status: "CERRADA", boost: 0.38, impl: 0.72, budget: 4200 },
-    { type: "EXHIBICION", title: "Punta de góndola snacks — temporada de fútbol", mechanic: "Punta de góndola con Crock y Nutty, precio especial 10 %", skus: "SNK-0", from: [-4, 1], to: [-3, 30], status: "CERRADA", boost: 0.27, impl: 0.6, budget: 6800 },
+    { type: "PROMOCION", title: "Regreso a clases — jugos Frutal", mechanic: "Pague 2 lleve 3 en jugos Frutal 1 L", skus: "BEB-02", from: [-6, 1], to: [-5, 31], status: "CERRADA", boost: 0.38, impl: 0.5, budget: 4200 },
+    { type: "EXHIBICION", title: "Punta de góndola snacks — temporada de fútbol", mechanic: "Punta de góndola con Crock y Nutty, precio especial 10 %", skus: "SNK-0", from: [-4, 1], to: [-3, 30], status: "CERRADA", boost: 0.27, impl: 0.45, budget: 6800 },
     { type: "DEGUSTACION", title: "Degustación yogurt griego Pradera", mechanic: "Impulsadora viernes y sábado, 10 a. m. a 6 p. m.", skus: "LAC-0202", from: [-2, 5], to: [-2, 28], status: "APROBADA", boost: 0.22, impl: 0.55, budget: 2600 },
     { type: "PROMOCION", title: "Cuidado capilar Vitalé — 20 % en la segunda unidad", mechanic: "20 % de descuento en la segunda unidad de shampoo o acondicionador", skus: "CPE-01", from: [-1, 1], to: [1, 15], status: "APROBADA", boost: 0.3, impl: 0.5, budget: 5400 },
     { type: "MATERIAL_POP", title: "Rompetráficos Energizante Volt", mechanic: "Rompetráfico y cenefa en nevera de bebidas frías", skus: "BEB-04", from: [0, 1], to: [1, 30], status: "APROBADA", boost: 0.15, impl: 0.35, budget: 1500 },
@@ -931,7 +931,9 @@ async function main() {
     const startDate = noonBogota(spec.from[0], spec.from[1]);
     const endDate = noonBogota(spec.to[0], spec.to[1]);
     const productIds = bySku(spec.skus);
-    const companyStores = stores.filter((st) => st.companyId === company.id);
+    // Se pacta en parte de las tiendas: las demás sirven de comparación al medir el efecto.
+    const chainStores = stores.filter((st) => st.companyId === company.id);
+    const companyStores = chainStores.filter((_, n) => n < 2 || chance(0.65));
     const started = startDate <= TODAY && ["APROBADA", "CERRADA"].includes(spec.status);
     const finished = endDate < TODAY;
 
@@ -978,6 +980,15 @@ async function main() {
     }
   }
 
+  // La rotación de la demo se calibra contra lo que cada cadena nos compra: un
+  // sell-through cercano al 90 %, como el de un cliente sano.
+  const sellInLines = await prisma.salesOrderLine.findMany({
+    where: { order: { companyId: { in: chains.map((c) => c.id) }, invoice: { isNot: null } } },
+    select: { quantity: true, order: { select: { companyId: true } } },
+  });
+  const monthlySellIn = new Map<string, number>();
+  for (const l of sellInLines) monthlySellIn.set(l.order.companyId, (monthlySellIn.get(l.order.companyId) ?? 0) + l.quantity / 15);
+
   let sellOutRows = 0;
   for (const company of chains) {
     const record = await prisma.sellOutImport.create({
@@ -994,10 +1005,14 @@ async function main() {
     });
     const companyStores = stores.filter((st) => st.companyId === company.id);
     const rows: { period: string; companyId: string; storeId: string; productId: string; units: number; amount: number; importId: string }[] = [];
+    const tierWeight = (t: string) => (t === "A" ? 3 : t === "B" ? 1.8 : 1);
+    const totalWeight = companyStores.reduce((t, st) => t + tierWeight(st.tier), 0);
+    const target = (monthlySellIn.get(company.id) ?? 0) * 0.9;
     for (const st of companyStores) {
-      const [lo, hi] = st.tier === "A" ? [16, 42] : st.tier === "B" ? [7, 22] : [3, 11];
       const portfolio = products.filter(() => chance(0.6));
-      const base = new Map(portfolio.map((p) => [p.id, int(lo, hi)]));
+      // Lo que le toca a la tienda según su peso, repartido entre su portafolio.
+      const perProduct = (target * tierWeight(st.tier)) / totalWeight / Math.max(1, portfolio.length);
+      const base = new Map(portfolio.map((p) => [p.id, Math.max(1, Math.round(perProduct * (0.5 + rnd())))]));
       // Una de cada doce tiendas dejó de rotar el último mes: quiebre que el portal delata.
       const stopped = chance(1 / 12);
       for (let monthsAgo = 13; monthsAgo >= 1; monthsAgo--) {

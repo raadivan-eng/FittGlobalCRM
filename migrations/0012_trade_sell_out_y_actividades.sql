@@ -76,6 +76,11 @@ CREATE TABLE "TradeActivityProduct" (
     "activityId" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
 
+    PRIMARY KEY ("activityId", "productId"),
+    CONSTRAINT "TradeActivityProduct_activityId_fkey" FOREIGN KEY ("activityId") REFERENCES "TradeActivity" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "TradeActivityProduct_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
 -- CreateTable
 CREATE TABLE "TradeExecution" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -127,3 +132,4 @@ CREATE INDEX "TradeExecution_storeId_status_idx" ON "TradeExecution"("storeId", 
 
 -- CreateIndex
 CREATE UNIQUE INDEX "TradeExecution_activityId_storeId_key" ON "TradeExecution"("activityId", "storeId");
+

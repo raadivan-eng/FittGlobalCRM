@@ -281,6 +281,17 @@ export async function planSellOutImport(buffer: ArrayBuffer, fileName: string, o
     const missingProducts = new Map<string, UnmatchedProduct>();
     const learned = new Map<string, { code: string; productId: string; description: string }>();
 
+    // Cada fila que casa por EAN enseña el código propio de la cadena: así se
+    // reconocen las filas donde el EAN llega dañado, en este archivo y en los
+    // siguientes. Se aprende antes de casar para que el orden de las filas no importe.
+    for (const r of s.rows) {
+      const fromEan = r.ean ? byEan.get(r.ean) : undefined;
+      const k = r.itemCode ? codeKey(r.itemCode) : "";
+      if (!fromEan || !k || aliasOf.has(k)) continue;
+      aliasOf.set(k, fromEan);
+      learned.set(k, { code: k, productId: fromEan, description: r.description });
+    }
+
     for (const r of s.rows) {
       if (r.period > current) {
         base.skippedRows++;
@@ -288,18 +299,11 @@ export async function planSellOutImport(buffer: ArrayBuffer, fileName: string, o
         continue;
       }
       const storeId = storeExact.get(codeKey(r.storeCode)) ?? storeLoose.get(looseCode(r.storeCode));
-      const fromEan = r.ean ? byEan.get(r.ean) : undefined;
       const productId =
-        fromEan ??
+        (r.ean ? byEan.get(r.ean) : undefined) ??
         (r.itemCode ? aliasOf.get(codeKey(r.itemCode)) : undefined) ??
         (r.ean ? aliasOf.get(r.ean) : undefined) ??
         (r.description ? aliasOf.get(codeKey(r.description)) : undefined);
-
-      // Cada fila que casa por EAN enseña el código propio de la cadena, para
-      // reconocer después las filas donde el EAN llegue dañado.
-      if (fromEan && r.itemCode && !aliasOf.has(codeKey(r.itemCode)) && !learned.has(codeKey(r.itemCode))) {
-        learned.set(codeKey(r.itemCode), { code: codeKey(r.itemCode), productId: fromEan, description: r.description });
-      }
 
       if (!storeId || !productId) {
         base.skippedRows++;

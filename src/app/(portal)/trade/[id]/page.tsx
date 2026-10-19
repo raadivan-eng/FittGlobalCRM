@@ -171,11 +171,12 @@ export default async function ActividadDetalle({ params, searchParams }: { param
                     format="number"
                     data={impact.periods.map((p) => ({
                       label: `${periodLabel(p.period)}${p.during ? " ●" : ""}`,
-                      values: [Math.round(p.implemented * 10) / 10, Math.round(p.rest * 10) / 10],
+                      values: [p.implemented, ...(impact.rest.stores ? [p.rest] : [])].map((v) => Math.round(v * 10) / 10),
                     }))}
+                    // Sin tiendas de comparación no se pinta una línea en cero que parezca un dato.
                     series={[
                       { name: `Implementada (${impact.implemented.stores} tiendas)`, color: "var(--series-1)" },
-                      { name: `Resto del cliente (${impact.rest.stores} tiendas)`, color: "var(--series-2)" },
+                      ...(impact.rest.stores ? [{ name: `Resto del cliente (${impact.rest.stores} tiendas)`, color: "var(--series-2)" }] : []),
                     ]}
                   />
                   <p className="mt-1 text-[11.5px] text-[var(--text-muted)]">● meses de vigencia con sell-out cargado ({impact.monthsMeasured}).</p>
