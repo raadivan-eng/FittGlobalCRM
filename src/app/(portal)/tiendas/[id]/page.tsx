@@ -1,11 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireSection } from "@/lib/auth";
+import { can, CONTACT_ROLES, requireSection } from "@/lib/auth";
+import { tradePhase } from "@/lib/trade";
+import { periodLabel, periodsUntil } from "@/lib/sell-out";
+import { desvincularContacto } from "@/lib/actions-contacts";
+import { ContactEditor, LinkContactForm } from "@/components/contact-forms";
 import { NOT_VOID, startOfMonth } from "@/lib/analytics";
 import { loadStoresForRouting } from "@/lib/field";
 import { scoreStores } from "@/lib/routing";
-import { INCIDENT_TYPES, SEVERITIES, STORE_FORMATS, TIERS, VISIT_STATUS, GEO_STATUS } from "@/lib/enums";
+import { INCIDENT_TYPES, SEVERITIES, STORE_FORMATS, TIERS, TRADE_EXECUTION, TRADE_PHASE, TRADE_TYPES, VISIT_STATUS, GEO_STATUS } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtMoneyPrecise, fmtNumber, relativeDays } from "@/lib/format";
 import { Card, CardHeader, EnumBadge, KeyValue, PageHeader, StatTile } from "@/components/ui";
 import { ScoreBadge } from "@/components/score-badge";
@@ -20,7 +24,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 }
 
 export default async function TiendaDetalle({ params }: { params: Promise<{ id: string }> }) {
-  await requireSection("tiendas");
+  const user = await requireSection("tiendas");
   const { id } = await params;
 
   const store = await prisma.store.findUnique({
@@ -28,10 +32,24 @@ export default async function TiendaDetalle({ params }: { params: Promise<{ id: 
     include: {
       company: { select: { id: true, name: true, tier: true, channel: true } },
       assignments: { include: { user: { select: { id: true, name: true, phone: true, zone: true, avatarColor: true } } } },
-      contacts: { orderBy: { lastName: "asc" } },
+      contacts: { orderBy: { contact: { lastName: "asc" } }, include: { contact: true } },
     },
   });
   if (!store) notFound();
+
+  const canEditContacts = CONTACT_ROLES.includes(user.role);
+  const linked = new Set(store.contacts.map((sc) => sc.contactId));
+  const linkable = canEditContacts
+    ? (
+        await prisma.contact.findMany({
+          where: { companyId: store.company.id },
+          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+          select: { id: true, firstName: true, lastName: true, position: true },
+        })
+      )
+        .filter((c) => !linked.has(c.id))
+        .map((c) => ({ id: c.id, label: `${c.firstName} ${c.lastName} · ${c.position}` }))
+    : [];
 
   const since = startOfMonth(-2);
   const [visits, openIncidents, orderTotals, signals] = await Promise.all([
@@ -52,6 +70,25 @@ export default async function TiendaDetalle({ params }: { params: Promise<{ id: 
     prisma.salesOrder.aggregate({ where: { storeId: id, date: { gte: since }, status: NOT_VOID }, _sum: { total: true }, _count: true }),
     loadStoresForRouting({ storeIds: [id] }),
   ]);
+
+  // Trade: lo pactado que debe verse hoy en esta tienda y cómo rota.
+  const showTrade = can(user.role, "trade");
+  const showSellOut = can(user.role, "sellout");
+  const [trade, sellOut] = await Promise.all([
+    showTrade
+      ? prisma.tradeExecution.findMany({
+          where: { storeId: id, activity: { status: "APROBADA", endDate: { gte: new Date(Date.now() - 86_400_000) } } },
+          orderBy: { activity: { startDate: "asc" } },
+          include: { activity: { select: { id: true, code: true, title: true, type: true, mechanic: true, status: true, startDate: true, endDate: true } } },
+        })
+      : [],
+    showSellOut
+      ? prisma.sellOut.groupBy({ by: ["period"], where: { storeId: id }, _sum: { units: true }, orderBy: { period: "desc" }, take: 6 })
+      : [],
+  ]);
+  const sellOutPeriods = sellOut.length ? periodsUntil(sellOut[0].period, 6) : [];
+  const sellOutBy = new Map(sellOut.map((r) => [r.period, r._sum.units ?? 0]));
+  const sellOutMax = Math.max(1, ...sellOutBy.values());
 
   const scored = scoreStores(signals)[0];
 
@@ -156,18 +193,36 @@ export default async function TiendaDetalle({ params }: { params: Promise<{ id: 
           </Card>
 
           <Card>
-            <CardHeader title="Contactos en la tienda" />
+            <CardHeader
+              title="Contactos en la tienda"
+              subtitle="Personas del cliente que atienden este punto"
+              action={canEditContacts ? <ContactEditor companyId={store.company.id} stores={[{ id: store.id, name: store.name }]} checkedStoreId={store.id} /> : undefined}
+            />
             {store.contacts.length === 0 ? (
-              <p className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">Sin contactos registrados en este punto.</p>
+              <p className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">Sin contactos vinculados a este punto.</p>
             ) : (
               <ul className="divide-y divide-[var(--border)]">
-                {store.contacts.map((c) => (
-                  <li key={c.id} className="px-4 py-2.5">
-                    <p className="text-[13px] font-medium">{c.firstName} {c.lastName}</p>
-                    <p className="text-[11.5px] text-[var(--text-muted)]">{c.position} · {c.phone ?? c.email ?? "sin datos"}</p>
+                {store.contacts.map(({ contact: c }) => (
+                  <li key={c.id} className="flex items-start justify-between gap-2 px-4 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium">{c.firstName} {c.lastName}</p>
+                      <p className="text-[11.5px] text-[var(--text-muted)]">{c.position} · {c.phone ?? c.email ?? "sin datos"}</p>
+                    </div>
+                    {canEditContacts && (
+                      <form action={desvincularContacto}>
+                        <input type="hidden" name="storeId" value={store.id} />
+                        <input type="hidden" name="contactId" value={c.id} />
+                        <button type="submit" className="btn btn-ghost !px-2 text-[12px]" title="El contacto sigue en el cliente">Desvincular</button>
+                      </form>
+                    )}
                   </li>
                 ))}
               </ul>
+            )}
+            {canEditContacts && linkable.length > 0 && (
+              <div className="border-t border-[var(--border)] px-4 py-3">
+                <LinkContactForm storeId={store.id} options={linkable} />
+              </div>
             )}
           </Card>
         </div>
@@ -222,6 +277,59 @@ export default async function TiendaDetalle({ params }: { params: Promise<{ id: 
               </div>
             )}
           </Card>
+
+          {(showTrade || showSellOut) && (
+            <Card>
+              <CardHeader
+                title="Trade en la tienda"
+                subtitle="Actividades aprobadas que deben verse en góndola y unidades vendidas al consumidor"
+                action={showSellOut && sellOut.length > 0 && <Link href={`/sell-out?cliente=${store.company.id}`} className="btn btn-ghost !px-2 text-[12.5px]">Sell out del cliente</Link>}
+              />
+              {showTrade && (
+                trade.length === 0 ? (
+                  <p className="px-4 py-3 text-[13px] text-[var(--text-muted)]">Sin actividades vigentes ni próximas en esta tienda.</p>
+                ) : (
+                  <ul className="divide-y divide-[var(--border)]">
+                    {trade.map((t) => {
+                      const phase = tradePhase(t.activity);
+                      return (
+                        <li key={t.id} className="flex flex-wrap items-start justify-between gap-2 px-4 py-2.5">
+                          <div className="min-w-0">
+                            <Link href={`/trade/${t.activity.id}?ciudad=${encodeURIComponent(store.city)}`} className="text-[13px] font-medium hover:text-[var(--brand)] hover:underline">
+                              {t.activity.title}
+                            </Link>
+                            <p className="text-[11.5px] text-[var(--text-muted)]">
+                              {TRADE_TYPES.label(t.activity.type)}{t.activity.mechanic ? ` · ${t.activity.mechanic}` : ""} · hasta {fmtDate(t.activity.endDate)}
+                            </p>
+                          </div>
+                          <span className="flex shrink-0 flex-wrap gap-1">
+                            {phase && <EnumBadge option={TRADE_PHASE.get(phase)} />}
+                            <EnumBadge option={TRADE_EXECUTION.get(t.status)} dot />
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )
+              )}
+              {showSellOut && sellOut.length > 0 && (
+                <div className="flex items-end gap-2 border-t border-[var(--border)] px-4 pb-3 pt-3">
+                  {sellOutPeriods.map((p) => {
+                    const u = sellOutBy.get(p) ?? 0;
+                    return (
+                      <div key={p} className="flex flex-1 flex-col items-center gap-1" title={`${fmtNumber(u)} unidades`}>
+                        <span className="text-[11px] font-semibold tabular">{fmtNumber(u)}</span>
+                        <div className="flex h-12 w-full items-end">
+                          <div className="w-full rounded-t-[4px] bg-[var(--series-1)]" style={{ height: `${Math.max(2, (u / sellOutMax) * 100)}%`, opacity: u ? 1 : 0.25 }} />
+                        </div>
+                        <span className="text-[10.5px] text-[var(--text-muted)]">{periodLabel(p)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
 
           <Card>
             <CardHeader title="Novedades abiertas" action={<Link href={`/novedades?tienda=${store.id}`} className="btn btn-ghost !px-2 text-[12.5px]">Gestionar</Link>} />

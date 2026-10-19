@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireSection } from "@/lib/auth";
-import { lastMonths, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
-import { CHANNELS, COMPANY_TYPES, INVOICE_STATUS, ORDER_STATUS, STORE_FORMATS, TIERS } from "@/lib/enums";
+import { CLIENT_ROLES, CONTACT_ROLES, requireSection } from "@/lib/auth";
+import { LEAD_ROLES } from "@/lib/leads";
+import { ContactEditor } from "@/components/contact-forms";
+import { ClientCard } from "./client-editor";
+import { companyForecasts, lastMonths, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
+import { CHANNELS, COMPANY_TYPES, INVOICE_STATUS, ORDER_STATUS, SIIGO_CUSTOMER, STORE_FORMATS, TIERS } from "@/lib/enums";
+import { enviarClienteASiigo } from "@/lib/actions-leads";
+import { parseTaxData, taxSummary } from "@/lib/rut";
 import { fmtCompact, fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
 import { Card, CardHeader, EnumBadge, KeyValue, PageHeader, StatTile } from "@/components/ui";
 import { GroupedBarChart, RankingBars } from "@/components/charts";
@@ -18,7 +23,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 }
 
 export default async function ClienteDetalle({ params }: { params: Promise<{ id: string }> }) {
-  await requireSection("clientes");
+  const user = await requireSection("clientes");
   const { id } = await params;
 
   const company = await prisma.company.findUnique({
@@ -33,20 +38,25 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
           _count: { select: { incidents: true } },
         },
       },
-      contacts: { orderBy: [{ isPrimary: "desc" }, { lastName: "asc" }], include: { store: { select: { name: true } } } },
+      contacts: {
+        orderBy: [{ isPrimary: "desc" }, { lastName: "asc" }],
+        include: { stores: { include: { store: { select: { id: true, name: true } } } } },
+      },
     },
   });
   if (!company) notFound();
 
+  const canEditContacts = CONTACT_ROLES.includes(user.role);
+  const canEditClient = CLIENT_ROLES.includes(user.role);
   const range = lastMonths(12);
   const since = range[0].start;
 
-  const [invoices, forecasts, orders, pending, topSkus] = await Promise.all([
+  const [invoices, forecasts, orders, pending, topSkus, owners] = await Promise.all([
     prisma.invoice.findMany({
       where: { companyId: id, issueDate: { gte: since }, status: NOT_VOID },
-      select: { issueDate: true, total: true },
+      select: { issueDate: true, net: true },
     }),
-    prisma.forecast.findMany({ where: { companyId: id, period: { in: range.map((r) => r.period) } }, select: { period: true, amount: true } }),
+    companyForecasts(range.map((r) => r.period), id),
     prisma.salesOrder.findMany({
       where: { companyId: id },
       orderBy: { date: "desc" },
@@ -61,6 +71,9 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
       orderBy: { _sum: { total: "desc" } },
       take: 6,
     }),
+    canEditClient
+      ? prisma.user.findMany({ where: { active: true, role: { in: LEAD_ROLES } }, orderBy: { name: "asc" }, select: { id: true, name: true } })
+      : Promise.resolve([]),
   ]);
 
   const products = await prisma.product.findMany({
@@ -70,15 +83,19 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
   const productById = new Map(products.map((p) => [p.id, p]));
 
   const realByPeriod = new Map<string, number>();
-  for (const i of invoices) realByPeriod.set(periodKey(i.issueDate), (realByPeriod.get(periodKey(i.issueDate)) ?? 0) + i.total);
-  const fcByPeriod = new Map(forecasts.map((f) => [f.period, f.amount]));
+  for (const i of invoices) realByPeriod.set(periodKey(i.issueDate), (realByPeriod.get(periodKey(i.issueDate)) ?? 0) + i.net);
+  const fcByPeriod = new Map(range.map((r) => [r.period, forecasts.get(r.period)?.get(id)?.amount ?? 0]));
 
-  const billed12 = invoices.reduce((s, i) => s + i.total, 0);
+  const billed12 = invoices.reduce((s, i) => s + i.net, 0);
   const owed = pending.reduce((s, i) => s + (i.total - i.paidAmount), 0);
   const overdue = pending.filter((i) => i.dueDate < new Date()).reduce((s, i) => s + (i.total - i.paidAmount), 0);
   const currentPeriod = periodKey(startOfMonth(0));
   const monthReal = realByPeriod.get(currentPeriod) ?? 0;
   const monthForecast = fcByPeriod.get(currentPeriod) ?? 0;
+
+  // Sólo los clientes convertidos con su documento se pueden enviar a Siigo desde aquí.
+  const fiscal = parseTaxData(company.fiscalData);
+  const siigoState = company.siigoId ? "EN_SIIGO" : company.siigoError ? "RECHAZADO" : "SIN_ENVIAR";
 
   return (
     <>
@@ -98,7 +115,7 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Facturación 12 meses" value={fmtCompact(billed12)} hint={`${invoices.length} facturas emitidas`} icon={<IconSales size={15} />} />
-        <StatTile label="Mes en curso" value={fmtCompact(monthReal)} hint={monthForecast ? `${((monthReal / monthForecast) * 100).toFixed(0)}% del forecast (${fmtCompact(monthForecast)})` : "Sin forecast cargado"} icon={<IconTarget size={15} />} />
+        <StatTile label="Mes en curso" value={fmtCompact(monthReal)} hint={monthForecast ? `${((monthReal / monthForecast) * 100).toFixed(0)}% del forecast (${fmtCompact(monthForecast)})` : "Sin historial para proyectar"} icon={<IconTarget size={15} />} />
         <StatTile label="Por cobrar" value={fmtCompact(owed)} hint={overdue > 0 ? `${fmtCompact(overdue)} ya vencido` : "Al día"} icon={<IconBuilding size={15} />} />
         <StatTile label="Red del cliente" value={fmtNumber(company.stores.length)} hint={`${fmtNumber(company.contacts.length)} contactos registrados`} icon={<IconStore size={15} />} />
       </div>
@@ -119,9 +136,20 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
           </div>
         </Card>
 
-        <Card>
-          <CardHeader title="Ficha comercial" />
+        <ClientCard
+          row={{
+            id: company.id, name: company.name, taxId: company.taxId, type: company.type, channel: company.channel, tier: company.tier,
+            ownerId: company.ownerId, city: company.city, address: company.address, phone: company.phone, email: company.email,
+            creditLimit: company.creditLimit, paymentTermDays: company.paymentTermDays, notes: company.notes, siigoId: company.siigoId,
+          }}
+          owners={owners} canEdit={canEditClient}>
           <dl className="grid grid-cols-2 gap-x-4 px-4 py-3">
+            <KeyValue label="Tipo de cliente">
+              <span title={COMPANY_TYPES.get(company.type).hint}><EnumBadge option={COMPANY_TYPES.get(company.type)} /></span>
+            </KeyValue>
+            <KeyValue label="Canal">
+              <span title={CHANNELS.get(company.channel).hint}><EnumBadge option={CHANNELS.get(company.channel)} /></span>
+            </KeyValue>
             <KeyValue label="NIT">{company.taxId ?? "—"}</KeyValue>
             <KeyValue label="Responsable">{company.owner?.name ?? "Sin asignar"}</KeyValue>
             <KeyValue label="Ciudad">{company.city ?? "—"}</KeyValue>
@@ -130,9 +158,24 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
             <KeyValue label="Correo">{company.email ?? "—"}</KeyValue>
             <KeyValue label="Cupo de crédito">{fmtMoney(company.creditLimit)}</KeyValue>
             <KeyValue label="Plazo de pago">{company.paymentTermDays} días</KeyValue>
+            {fiscal && <KeyValue label="Situación tributaria">{taxSummary(fiscal)}</KeyValue>}
+            {(fiscal || company.siigoId) && (
+              <KeyValue label="Siigo">
+                <EnumBadge option={SIIGO_CUSTOMER.get(siigoState)} />
+              </KeyValue>
+            )}
           </dl>
+          {fiscal && !company.siigoId && (
+            <form action={enviarClienteASiigo} className="flex flex-col items-start gap-1.5 border-t border-[var(--border)] px-4 py-3">
+              <input type="hidden" name="companyId" value={company.id} />
+              {company.siigoError && <p className="text-[12px] text-[var(--tone-danger-fg)]">{company.siigoError}</p>}
+              <button type="submit" className="btn btn-secondary">
+                {company.siigoError ? "Reintentar en Siigo" : "Crear en Siigo"}
+              </button>
+            </form>
+          )}
           {company.notes && <p className="border-t border-[var(--border)] px-4 py-3 text-[12.5px] text-[var(--text-secondary)]">{company.notes}</p>}
-        </Card>
+        </ClientCard>
       </div>
 
       <div className="mt-5 grid items-start gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -184,9 +227,21 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
 
       <div className="mt-5 grid items-start gap-4 lg:grid-cols-[1fr_1fr]">
         <Card>
-          <CardHeader title="Contactos" subtitle="Personas de esta empresa y de sus tiendas" action={<Link href={`/contactos?cliente=${company.id}`} className="btn btn-ghost !px-2 text-[12.5px]">Ver todos</Link>} />
+          <CardHeader
+            title="Contactos"
+            subtitle="Personas de esta empresa; cada una puede atender varias de sus tiendas"
+            action={
+              <span className="flex gap-1">
+                {canEditContacts && <ContactEditor companyId={company.id} stores={company.stores.map((s) => ({ id: s.id, name: s.name }))} />}
+                <Link href={`/contactos?cliente=${company.id}`} className="btn btn-ghost !px-2 text-[12.5px]">Ver todos</Link>
+              </span>
+            }
+          />
+          {company.contacts.length === 0 && (
+            <p className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">Sin contactos registrados.</p>
+          )}
           <ul className="divide-y divide-[var(--border)]">
-            {company.contacts.slice(0, 8).map((c) => (
+            {company.contacts.slice(0, 12).map((c) => (
               <li key={c.id} className="px-4 py-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -195,9 +250,16 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
                       {c.isPrimary && <span className="badge badge-info ml-1.5">Principal</span>}
                       {c.isDecisionMaker && <span className="badge badge-purple ml-1">Decide</span>}
                     </p>
-                    <p className="mt-0.5 truncate text-[12px] text-[var(--text-muted)]">
-                      {c.position}
-                      {c.store ? ` · ${c.store.name}` : " · Corporativo"}
+                    <p className="mt-0.5 text-[12px] text-[var(--text-muted)]">
+                      {c.position} ·{" "}
+                      {c.stores.length === 0
+                        ? "Corporativo"
+                        : c.stores.map((sc, i) => (
+                            <span key={sc.storeId}>
+                              {i > 0 && ", "}
+                              <Link href={`/tiendas/${sc.store.id}`} className="hover:text-[var(--brand)] hover:underline">{sc.store.name}</Link>
+                            </span>
+                          ))}
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-0.5 text-[11.5px] text-[var(--text-secondary)]">
@@ -205,6 +267,11 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
                     {c.email && <span className="inline-flex items-center gap-1 truncate"><IconMail size={11} /> {c.email}</span>}
                   </div>
                 </div>
+                {canEditContacts && (
+                  <div className="mt-1">
+                    <ContactEditor companyId={company.id} row={c} />
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -219,7 +286,7 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
                   <th>Pedido</th>
                   <th>Fecha</th>
                   <th>Estado</th>
-                  <th className="num">Total</th>
+                  <th className="num">Sin IVA</th>
                   <th>Factura</th>
                 </tr>
               </thead>
@@ -232,7 +299,7 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
                     </td>
                     <td className="whitespace-nowrap text-[var(--text-secondary)]">{fmtDate(o.date)}</td>
                     <td><EnumBadge option={ORDER_STATUS.get(o.status)} /></td>
-                    <td className="num font-semibold">{fmtCompact(o.total)}</td>
+                    <td className="num font-semibold">{fmtCompact(o.net)}</td>
                     <td>{o.invoice ? <EnumBadge option={INVOICE_STATUS.get(o.invoice.status)} /> : <span className="text-[var(--text-muted)]">—</span>}</td>
                   </tr>
                 ))}

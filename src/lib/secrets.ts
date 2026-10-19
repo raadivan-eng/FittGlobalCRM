@@ -31,6 +31,20 @@ export function encryptJson(value: Record<string, string>) {
   return [iv, cipher.getAuthTag(), body].map((b) => b.toString("base64url")).join(".");
 }
 
+/**
+ * Sello de un texto generado en el servidor (los datos leídos de un RUT), para
+ * aceptarlo de vuelta desde el formulario sin que se pueda fabricar en el navegador.
+ */
+export function seal(text: string) {
+  return crypto.createHmac("sha256", KEY()).update(text).digest("base64url");
+}
+
+export function sealMatches(text: string, mark: string) {
+  const a = Buffer.from(seal(text));
+  const b = Buffer.from(mark);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 /** `null` si el paquete está corrupto o la clave cambió: nunca lanza. */
 export function decryptJson(packed: string | null | undefined): Record<string, string> | null {
   if (!packed) return null;

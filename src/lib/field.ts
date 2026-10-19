@@ -44,12 +44,12 @@ export async function loadStoresForRouting(
     prisma.salesOrder.groupBy({
       by: ["storeId"],
       where: { storeId: { in: storeIds }, date: { gte: since90 }, status: NOT_VOID },
-      _sum: { total: true },
+      _sum: { net: true },
     }),
     prisma.invoice.groupBy({
       by: ["companyId"],
       where: { companyId: { in: companyIds }, issueDate: { gte: since90 }, status: NOT_VOID },
-      _sum: { total: true },
+      _sum: { net: true },
     }),
     prisma.store.groupBy({ by: ["companyId"], where: { companyId: { in: companyIds }, active: true }, _count: true }),
   ]);
@@ -84,9 +84,9 @@ export async function loadStoresForRouting(
   }
 
   const directByStore = new Map<string, number>();
-  for (const d of directSales) if (d.storeId) directByStore.set(d.storeId, d._sum.total ?? 0);
+  for (const d of directSales) if (d.storeId) directByStore.set(d.storeId, d._sum.net ?? 0);
 
-  const companyTotal = new Map(companySales.map((c) => [c.companyId, c._sum.total ?? 0]));
+  const companyTotal = new Map(companySales.map((c) => [c.companyId, c._sum.net ?? 0]));
   const companyStoreCount = new Map(storesPerCompany.map((c) => [c.companyId, c._count]));
   const tierWeight: Record<string, number> = { A: 1.6, B: 1, C: 0.6 };
 

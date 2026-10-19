@@ -19,6 +19,28 @@ const FORMATTERS: Record<FormatKey, (v: number) => string> = {
 
 const useFormatter = (key: FormatKey = "number") => FORMATTERS[key] ?? FORMATTERS.number;
 
+/* Las marcas del eje son cifras redondas: los decimales fijos de las tarjetas
+   KPI (`$800,00 M`) sólo ensanchan la etiqueta. */
+function trimDecimals(v: number) {
+  return (Math.round(v * 100) / 100).toString().replace(".", ",");
+}
+
+const AXIS_FORMATTERS: Partial<Record<FormatKey, (v: number) => string>> = {
+  compact: (v) => {
+    const abs = Math.abs(v);
+    if (abs >= 1_000_000) return `$${trimDecimals(v / 1_000_000)} M`;
+    if (abs >= 1_000) return `$${trimDecimals(v / 1_000)} K`;
+    return `$${Math.round(v)}`;
+  },
+  percent: (v) => `${trimDecimals(v)}%`,
+};
+
+const useAxisFormatter = (key: FormatKey = "number") => AXIS_FORMATTERS[key] ?? useFormatter(key);
+
+/* El margen izquierdo sigue a la etiqueta más larga del eje en lugar de ser
+   fijo; ~6,2 px por carácter a 10,5 px de cuerpo tabular. */
+const axisPad = (labels: string[]) => Math.max(36, Math.ceil(Math.max(0, ...labels.map((l) => l.length)) * 6.2) + 14);
+
 /* Ancho medido en cliente: evita distorsionar trazos con preserveAspectRatio. */
 function useWidth<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
@@ -97,15 +119,18 @@ export function GroupedBarChart({
   const { ref, width } = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const f = useFormatter(format);
+  const fa = useAxisFormatter(format);
 
-  const pad = { top: 12, right: 8, bottom: 26, left: 52 };
-  const plotW = Math.max(40, width - pad.left - pad.right);
-  const plotH = height - pad.top - pad.bottom;
   // Con toda la serie en cero no hay escala que dibujar: una única línea base
   // evita un eje de etiquetas repetidas (US$ 0 · US$ 0 · US$ 1…).
   const peak = Math.max(0, ...data.flatMap((d) => d.values));
   const ticks = peak > 0 ? niceTicks(peak) : [0];
   const top = ticks[ticks.length - 1] || 1;
+  const tickLabels = ticks.map(fa);
+
+  const pad = { top: 12, right: 8, bottom: 26, left: axisPad(tickLabels) };
+  const plotW = Math.max(40, width - pad.left - pad.right);
+  const plotH = height - pad.top - pad.bottom;
 
   const slot = plotW / Math.max(1, data.length);
   const groupW = Math.min(slot * 0.68, 46);
@@ -127,13 +152,13 @@ export function GroupedBarChart({
       <Legend series={series} />
       <div ref={ref} className="relative" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
         <svg width={width} height={height} role="img" aria-label={series.map((s) => s.name).join(" y ")}>
-          {ticks.map((t) => {
+          {ticks.map((t, ti) => {
             const y = pad.top + plotH - (t / top) * plotH;
             return (
               <g key={t}>
                 <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="var(--border)" strokeWidth={1} />
                 <text x={pad.left - 8} y={y + 3.5} textAnchor="end" fontSize={10.5} fill="var(--text-muted)" className="tabular">
-                  {f(t)}
+                  {tickLabels[ti]}
                 </text>
               </g>
             );
@@ -210,15 +235,18 @@ export function LineChart({
   const { ref, width } = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const f = useFormatter(format);
+  const fa = useAxisFormatter(format);
 
-  const pad = { top: 12, right: 12, bottom: 26, left: 52 };
-  const plotW = Math.max(40, width - pad.left - pad.right);
-  const plotH = height - pad.top - pad.bottom;
   // Con toda la serie en cero no hay escala que dibujar: una única línea base
   // evita un eje de etiquetas repetidas (US$ 0 · US$ 0 · US$ 1…).
   const peak = Math.max(0, ...data.flatMap((d) => d.values));
   const ticks = peak > 0 ? niceTicks(peak) : [0];
   const top = ticks[ticks.length - 1] || 1;
+  const tickLabels = ticks.map(fa);
+
+  const pad = { top: 12, right: 12, bottom: 26, left: axisPad(tickLabels) };
+  const plotW = Math.max(40, width - pad.left - pad.right);
+  const plotH = height - pad.top - pad.bottom;
   const stepX = data.length > 1 ? plotW / (data.length - 1) : 0;
 
   const px = (i: number) => pad.left + stepX * i;
@@ -258,13 +286,13 @@ export function LineChart({
             ))}
           </defs>
 
-          {ticks.map((t) => {
+          {ticks.map((t, ti) => {
             const y = py(t);
             return (
               <g key={t}>
                 <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="var(--border)" strokeWidth={1} />
                 <text x={pad.left - 8} y={y + 3.5} textAnchor="end" fontSize={10.5} fill="var(--text-muted)" className="tabular">
-                  {f(t)}
+                  {tickLabels[ti]}
                 </text>
               </g>
             );

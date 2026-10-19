@@ -18,23 +18,32 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
-  role         String // ADMIN | COMERCIAL | SUPERVISOR | MERCADERISTA
+  role         String // ADMIN | COMERCIAL | BASIC | SUPERVISOR | MERCADERISTA
   phone        String?
   zone         String? // zona geográfica que cubre un mercaderista
   active       Boolean  @default(true)
   avatarColor  String   @default("#2563eb")
   createdAt    DateTime @default(now())
 
-  assignments       StoreAssignment[]
-  visits            Visit[]           @relation("VisitMerchandiser")
-  incidentsReported Incident[]        @relation("IncidentReporter")
-  incidentsAssigned Incident[]        @relation("IncidentAssignee")
-  accounts          Company[]         @relation("AccountOwner")
-  forecasts         Forecast[]
-  orders            SalesOrder[]
-  connectionEvents  ApiConnectionEvent[]
-  shipments         Shipment[]
-  shipmentEvents    ShipmentEvent[]
+  assignments        StoreAssignment[]
+  visits             Visit[]              @relation("VisitMerchandiser")
+  incidentsReported  Incident[]           @relation("IncidentReporter")
+  incidentsAssigned  Incident[]           @relation("IncidentAssignee")
+  accounts           Company[]            @relation("AccountOwner")
+  forecasts          Forecast[]
+  forecastExclusions ForecastExclusion[]
+  orders             SalesOrder[]
+  connectionEvents   ApiConnectionEvent[]
+  shipments          Shipment[]
+  shipmentEvents     ShipmentEvent[]
+  notifications      Notification[]
+  reviewedFinds      StoreCandidate[]     @relation("CandidateReviewer")
+  leadsOwned         Lead[]               @relation("LeadOwner")
+  leadsCreated       Lead[]               @relation("LeadCreator")
+  leadEvents         LeadEvent[]
+  sellOutImports     SellOutImport[]
+  tradeActivities    TradeActivity[]      @relation("TradeOwner")
+  tradeChecks        TradeExecution[]
 
   @@index([role, active])
 }
@@ -59,15 +68,26 @@ model Company {
   notes           String?
   active          Boolean  @default(true)
   createdAt       DateTime @default(now())
+  siigoId         String? // id del tercero en Siigo, una vez creado o cruzado por NIT
+  fiscalData      String? // JSON con lo que se leyó del RUT o de la Cámara de Comercio
+  siigoError      String? // por qué falló el último envío a Siigo
 
-  ownerId   String?
-  owner     User?        @relation("AccountOwner", fields: [ownerId], references: [id])
-  stores    Store[]
-  contacts  Contact[]
-  orders    SalesOrder[]
-  invoices  Invoice[]
-  forecasts Forecast[]
-  shipments Shipment[]
+  ownerId            String?
+  owner              User?               @relation("AccountOwner", fields: [ownerId], references: [id])
+  stores             Store[]
+  contacts           Contact[]
+  orders             SalesOrder[]
+  invoices           Invoice[]
+  forecasts          Forecast[]
+  forecastExclusions ForecastExclusion[]
+  shipments          Shipment[]
+  finds              StoreCandidate[]
+  searches           LocatorSearch[]
+  leads              Lead[]
+  sellOut            SellOut[]
+  sellOutImports     SellOutImport[]
+  productAliases     ProductAlias[]
+  tradeActivities    TradeActivity[]
 
   @@index([tier, active])
 }
@@ -76,7 +96,7 @@ model Company {
 /// El código es el que usa la cadena (Colsubsidio D002, Locatel E111…), así que
 /// sólo es único dentro de su cliente: Farmatodo y Olímpica repiten numeración.
 model Store {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   code            String
   gln             String? // EAN localizador de la tienda, cuando la cadena lo publica
   name            String
@@ -87,33 +107,41 @@ model Store {
   zone            String // usada para agrupar rutas
   lat             Float? // vacías hasta geocodificar la dirección: sin ellas la tienda no entra al ruteo
   lng             Float?
-  geoStatus       String    @default("PENDIENTE") // PENDIENTE | UBICADA | POR_REVISAR | NO_ENCONTRADA | MANUAL
+  geoStatus       String    @default("PENDIENTE") // PENDIENTE | UBICADA | POR_REVISAR | NO_ENCONTRADA | MANUAL | DIGITAL
   geoSource       String? // GEOCODING | PLACES | MANUAL
   geoMatch        String? // qué encontró Google, para poder revisar el resultado
   geocodedAt      DateTime?
-  format          String // HIPERMERCADO | SUPERMERCADO | MINIMARKET | BODEGA | FARMACIA | MAYORISTA
-  tier            String   @default("B") // A | B | C
-  visitsPerMonth  Int      @default(2) // frecuencia objetivo de visita
-  avgVisitMinutes Int      @default(35)
-  openTime        String   @default("08:00")
-  closeTime       String   @default("18:00")
-  active          Boolean  @default(true)
+  placeId         String? // id del lugar en Google Maps: así el localizador reconoce la tienda
+  format          String // HIPERMERCADO | SUPERMERCADO | MINIMARKET | BODEGA | FARMACIA | MAYORISTA | ESPECIALIZADA | ECOMMERCE
+  tier            String    @default("B") // A | B | C
+  visitsPerMonth  Int       @default(2) // frecuencia objetivo de visita
+  avgVisitMinutes Int       @default(35)
+  openTime        String    @default("08:00")
+  closeTime       String    @default("18:00")
+  active          Boolean   @default(true)
   inactiveReason  String? // por qué no se visita: centro de distribución, cerrada, «No aplica»…
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   company     Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  contacts    Contact[]
+  contacts    StoreContact[]
   assignments StoreAssignment[]
   visits      Visit[]
   incidents   Incident[]
   orders      SalesOrder[]
   shipments   Shipment[]
+  suggestedIn StoreCandidate[]  @relation("CandidateSuggested")
+  foundAs     StoreCandidate[]  @relation("CandidateStore")
+  fromLead    LeadStore[]
+  sellOut     SellOut[]
+  tradeChecks TradeExecution[]
 
   @@unique([companyId, code])
   @@index([zone, active])
+  @@index([placeId])
 }
 
-/// Persona de contacto. Siempre pertenece a una empresa y, opcionalmente, a una tienda concreta.
+/// Persona de contacto. Pertenece a un solo cliente y puede atender varias de
+/// sus tiendas (StoreContact); sin tiendas es un contacto corporativo.
 model Contact {
   id              String    @id @default(cuid())
   firstName       String
@@ -122,18 +150,31 @@ model Contact {
   phone           String?
   position        String // Comprador, Jefe de tienda, Gerente de categoría…
   companyId       String
-  storeId         String?
   isPrimary       Boolean   @default(false)
   isDecisionMaker Boolean   @default(false)
   notes           String?
   lastContactAt   DateTime?
   createdAt       DateTime  @default(now())
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  store   Store?  @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  company  Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  stores   StoreContact[]
+  fromLead LeadContact[]
 
   @@index([companyId])
-  @@index([storeId])
+}
+
+/// Qué contactos atienden cada tienda. La tienda y el contacto son siempre del
+/// mismo cliente: lo comprueban las acciones que crean el vínculo.
+model StoreContact {
+  storeId   String
+  contactId String
+  createdAt DateTime @default(now())
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([storeId, contactId])
+  @@index([contactId])
 }
 
 // ─────────────────────────  Trabajo de campo (mercaderistas)  ─────────────────
@@ -253,6 +294,9 @@ model Product {
   shelfReports ShelfReport[]
   incidents    Incident[]
   forecasts    Forecast[]
+  sellOut      SellOut[]
+  aliases      ProductAlias[]
+  tradeIn      TradeActivityProduct[]
 
   @@index([category, active])
 }
@@ -296,8 +340,9 @@ model SalesOrder {
   status      String   @default("CONFIRMADO") // BORRADOR | CONFIRMADO | DESPACHADO | FACTURADO | ANULADO
   subtotal    Float    @default(0)
   discount    Float    @default(0)
+  net         Float    @default(0) // antes de IVA (subtotal − descuento): base de toda medida comercial
   tax         Float    @default(0)
-  total       Float    @default(0)
+  total       Float    @default(0) // con IVA
   createdById String?
   notes       String?
   createdAt   DateTime @default(now())
@@ -335,7 +380,8 @@ model Invoice {
   companyId  String
   issueDate  DateTime
   dueDate    DateTime
-  total      Float
+  net        Float    @default(0) // antes de IVA: lo que cuentan facturación, ventas y forecast
+  total      Float // con IVA: sólo para cartera (saldo y pagado)
   paidAmount Float    @default(0)
   status     String   @default("EMITIDA") // EMITIDA | PARCIAL | PAGADA | VENCIDA | ANULADA
 
@@ -363,6 +409,263 @@ model Forecast {
   createdBy User     @relation(fields: [createdById], references: [id])
 
   @@index([period])
+}
+
+/// Mes que no entra al promedio con que se proyecta el forecast, por
+/// extraordinario: una negociación especial, una carga inicial. Sin companyId
+/// aplica a todos los clientes; con él, sólo a ese cliente.
+model ForecastExclusion {
+  id          String   @id @default(cuid())
+  period      String // "2026-02"
+  companyId   String?
+  notes       String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([period])
+}
+
+// ─────────────────────────────────  Leads  ─────────────────────────────────────
+
+/// Prospecto: un negocio que todavía no es cliente y se quiere convertir.
+/// Entra por un medio (INBOUND: Facebook, Instagram, WhatsApp, la web o
+/// contacto directo) o lo sale a buscar el área comercial (SALES_HUNT); en ese
+/// caso siempre arranca por la ubicación de una tienda en Google Maps. Nace con
+/// al menos una tienda (LeadStore) y un contacto (LeadContact); al convertirse,
+/// los que se elijan pasan a ser tiendas y contactos del cliente. Un lead
+/// CALIENTE con mes de cierre y valor suma al forecast de ese mes.
+model Lead {
+  id             String    @id @default(cuid())
+  code           String    @unique // consecutivo interno LD-00001
+  entry          String // INBOUND | SALES_HUNT
+  source         String // FACEBOOK | INSTAGRAM | WHATSAPP | WEB | DIRECTO | SALES_HUNT
+  sourceDetail   String? // campaña, anuncio o formulario de donde vino
+  externalId     String? // id del lead en Meta o wa_id del número de WhatsApp
+  status         String    @default("NUEVO") // NUEVO | CONTACTADO | CALIFICADO | NEGOCIACION | GANADO | PERDIDO
+  temperature    String    @default("FRIO") // FRIO | TIBIO | CALIENTE
+  name           String // el negocio, o la persona mientras no se sepa el negocio
+  closePeriod    String? // mes tentativo de cierre, "2026-11"
+  expectedValue  Float? // lo que se espera facturarle ese mes
+  lostReason     String?
+  notes          String?
+  ownerId        String?
+  createdById    String? // vacío si entró solo por una API
+  companyId      String? // cliente en que se convirtió
+  convertedAt    DateTime?
+  lastActivityAt DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  owner     User?         @relation("LeadOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdBy User?         @relation("LeadCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  company   Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  events    LeadEvent[]
+  stores    LeadStore[]
+  contacts  LeadContact[]
+
+  @@index([status, temperature])
+  @@index([closePeriod])
+  @@index([externalId])
+}
+
+/// Punto de venta del prospecto. Los que llegan solos por un medio nacen con
+/// una tienda provisional (el nombre del negocio, sin ubicar) que el comercial
+/// completa. Al convertir, `storeId` apunta a la tienda que se creó.
+model LeadStore {
+  id        String   @id @default(cuid())
+  leadId    String
+  name      String
+  address   String?
+  city      String?
+  format    String? // tentativo, mismo catálogo que Store.format
+  lat       Float?
+  lng       Float?
+  placeId   String? // lugar de Google Maps del que partió el sales hunt
+  mapsUrl   String?
+  storeId   String?
+  createdAt DateTime @default(now())
+
+  lead  Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([placeId])
+}
+
+/// Persona con quien se habla en el prospecto. Teléfono y correo identifican al
+/// que vuelve a escribir por un medio. Al convertir, `contactId` apunta al
+/// contacto del cliente que se creó.
+model LeadContact {
+  id        String   @id @default(cuid())
+  leadId    String
+  name      String
+  position  String?
+  phone     String?
+  email     String?
+  contactId String?
+  createdAt DateTime @default(now())
+
+  lead    Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contact Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([phone])
+  @@index([email])
+}
+
+/// Bitácora del lead: lo que escribió por WhatsApp o el formulario, las notas
+/// del comercial y cada cambio de estado.
+model LeadEvent {
+  id         String   @id @default(cuid())
+  leadId     String
+  type       String // CREADO | MENSAJE | NOTA | ESTADO | CONVERTIDO
+  body       String
+  source     String // API | MANUAL | SISTEMA
+  externalId String?  @unique // id del mensaje o del lead en Meta: Meta reenvía y así no se duplica
+  userId     String?
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  lead Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, occurredAt])
+}
+
+// ──────────────────────────  Trade: sell-out y actividades  ─────────────────────
+
+/// Venta al consumidor que reporta la cadena: unidades de un producto en una
+/// tienda durante un mes. Es la rotación en el punto de venta; el sell-in es lo
+/// que nosotros le facturamos. Una fila por tienda, producto y mes: volver a
+/// cargar un mes de un cliente reemplaza lo que había de ese mes.
+model SellOut {
+  id        String  @id @default(cuid())
+  period    String // "2026-04"
+  companyId String
+  storeId   String
+  productId String
+  units     Int
+  amount    Float? // valor que reporta la cadena: cada portal lo trae distinto (con o sin IVA) o no lo trae
+  source    String  @default("ARCHIVO") // ARCHIVO | API
+  importId  String? // la carga que la trajo; ahí está la fecha
+
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  store   Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  import  SellOutImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+
+  @@unique([storeId, productId, period])
+  @@index([companyId, period])
+  @@index([period])
+}
+
+/// Código con que una cadena nombra nuestro producto en su reporte (SKU de
+/// Farmatodo, código SAP de Locatel, material de Colsubsidio). Se aprende solo
+/// cuando una fila casa por EAN, o se fija a mano al importar; sirve para las
+/// filas cuyo EAN llega vacío o dañado.
+model ProductAlias {
+  id          String   @id @default(cuid())
+  companyId   String
+  productId   String
+  code        String
+  description String? // como lo describe la cadena, para reconocerlo al revisar
+  createdAt   DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, code])
+  @@index([productId])
+}
+
+/// Cada carga de sell-out de un cliente: de qué archivo, qué meses y cuánto
+/// quedó por fuera porque la tienda o el producto no se reconocieron.
+model SellOutImport {
+  id           String   @id @default(cuid())
+  companyId    String
+  source       String   @default("ARCHIVO") // ARCHIVO | API
+  fileName     String?
+  sheet        String?
+  periods      String // meses que reemplazó, separados por coma
+  rows         Int // filas del reporte
+  units        Int // unidades que entraron
+  skippedRows  Int      @default(0)
+  skippedUnits Int      @default(0)
+  unmatched    String? // JSON con las tiendas y productos que no se reconocieron
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  company Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  lines   SellOut[]
+
+  @@index([companyId, createdAt])
+}
+
+/// Estrategia de trade o marketing pactada con un cliente: una promoción, una
+/// activación, una exhibición adicional… Vive entre dos fechas y se ejecuta en
+/// un conjunto de tiendas (TradeExecution), donde hay que comprobar que de
+/// verdad se implementó.
+model TradeActivity {
+  id          String   @id @default(cuid())
+  code        String   @unique // consecutivo interno TR-00001
+  type        String // PROMOCION | ACTIVACION | EXHIBICION | MATERIAL_POP | DEGUSTACION | CATALOGO | OTRO
+  status      String   @default("PLANEADA") // PLANEADA | APROBADA | CERRADA | CANCELADA
+  title       String
+  mechanic    String? // la mecánica tal como se pacta: «2×1», «20 % en la segunda unidad»
+  description String?
+  companyId   String
+  startDate   DateTime
+  endDate     DateTime
+  budget      Float    @default(0) // inversión comprometida, sin IVA
+  ownerId     String?
+  createdById String?
+  closingNote String? // aprendizaje al cerrarla
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company    Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  owner      User?                  @relation("TradeOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  products   TradeActivityProduct[]
+  executions TradeExecution[]
+
+  @@index([status, startDate])
+  @@index([companyId])
+}
+
+/// Productos que cubre una actividad. Sin productos, cubre todo el portafolio.
+model TradeActivityProduct {
+  activityId String
+  productId  String
+
+  activity TradeActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([activityId, productId])
+  @@index([productId])
+}
+
+/// La actividad en una tienda concreta: si se implementó, quién lo comprobó y cuándo.
+model TradeExecution {
+  id          String    @id @default(cuid())
+  activityId  String
+  storeId     String
+  status      String    @default("PENDIENTE") // PENDIENTE | IMPLEMENTADA | PARCIAL | NO_IMPLEMENTADA
+  notes       String?
+  evidenceUrl String? // foto o enlace que lo prueba
+  checkedAt   DateTime?
+  checkedById String?
+  createdAt   DateTime  @default(now())
+
+  activity  TradeActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  store     Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  checkedBy User?         @relation(fields: [checkedById], references: [id], onDelete: SetNull)
+
+  @@unique([activityId, storeId])
+  @@index([storeId, status])
 }
 
 // ───────────────────────────  Guías de transporte  ────────────────────────────
@@ -451,7 +754,30 @@ model ApiConnection {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  events ApiConnectionEvent[]
+  events  ApiConnectionEvent[]
+  modules ApiConnectionModule[]
+}
+
+/// Módulo de un proveedor con varias APIs bajo las mismas credenciales (cada
+/// Partner-ID de Siigo). El catálogo de módulos vive en src/lib/integrations.ts.
+model ApiConnectionModule {
+  id           String    @id @default(cuid())
+  connectionId String
+  module       String // FACTURACION | CLIENTES | INVENTARIOS
+  partnerId    String? // va en claro: identifica la aplicación, no es secreto
+  enabled      Boolean   @default(true)
+  status       String    @default("SIN_CONFIGURAR") // SIN_CONFIGURAR | PENDIENTE | CONECTADA | ERROR
+  lastCheckAt  DateTime?
+  lastDetail   String?
+  lastError    String?
+  lastSyncAt   DateTime? // cada módulo sincroniza a su propio ritmo
+  syncCursor   String? // JSON con el avance de una sincronización a medias; null si no hay ninguna en curso
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  connection ApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, module])
 }
 
 /// Bitácora de la conexión: cada guardado, prueba o desconexión deja rastro.
@@ -469,4 +795,72 @@ model ApiConnectionEvent {
   user       User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([connectionId, createdAt])
+}
+
+// ─────────────────────────────  Localizador de tiendas  ─────────────────────────
+
+/// Una búsqueda del localizador: la marca de una cadena en una ciudad donde ya
+/// tiene tiendas. El cron repasa primero las que llevan más tiempo sin correr.
+model LocatorSearch {
+  id          String    @id @default(cuid())
+  companyId   String
+  city        String // tal como la escribe el maestro de tiendas
+  query       String // lo que se le pide a Google: «Olímpica BARRANQUILLA»
+  lastRunAt   DateTime?
+  lastResults Int       @default(0) // lugares de la cadena que devolvió Google
+  lastNew     Int       @default(0) // de esos, cuántos no estaban en el CRM
+  lastError   String?
+  createdAt   DateTime  @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, city])
+  @@index([lastRunAt])
+}
+
+/// Lugar de Google Maps que parece una tienda de la cadena y no está en el
+/// maestro. Alguien la revisa: la crea como tienda, la vincula a una existente
+/// o la descarta (y entonces no vuelve a avisarse).
+model StoreCandidate {
+  id               String    @id @default(cuid())
+  placeId          String    @unique
+  companyId        String
+  name             String // como la nombra Google
+  address          String?
+  city             String // ciudad de la búsqueda que la encontró
+  lat              Float
+  lng              Float
+  mapsUrl          String?
+  types            String? // tipos de lugar de Google, separados por coma
+  status           String    @default("NUEVA") // NUEVA | CREADA | VINCULADA | DESCARTADA
+  suggestedStoreId String? // tienda del maestro que se le parece, para decidir rápido
+  storeId          String? // tienda creada o vinculada al revisarla
+  reviewedById     String?
+  reviewedAt       DateTime?
+  foundAt          DateTime  @default(now())
+  lastSeenAt       DateTime  @default(now())
+
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  suggestedStore Store?  @relation("CandidateSuggested", fields: [suggestedStoreId], references: [id], onDelete: SetNull)
+  store          Store?  @relation("CandidateStore", fields: [storeId], references: [id], onDelete: SetNull)
+  reviewedBy     User?   @relation("CandidateReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, companyId])
+}
+
+/// Aviso dentro del portal. Una fila por destinatario, para que cada quien
+/// marque como leído lo suyo.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String // TIENDA_ENCONTRADA | TIENDA_CREADA | LEAD_NUEVO | LEAD_MENSAJE
+  title     String
+  body      String?
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
 }

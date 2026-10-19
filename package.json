@@ -19,6 +19,7 @@
     "d1:datos": "bash scripts/d1-datos.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.135.0",
     "@opennextjs/cloudflare": "1.20.8",
     "@prisma/adapter-d1": "6.19.3",
     "@prisma/client": "6.19.3",

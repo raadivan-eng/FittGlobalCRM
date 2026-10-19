@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  IconAlert, IconClients, IconContacts, IconDashboard, IconExpiry, IconForecast,
-  IconMenu, IconPlug, IconProduct, IconReports, IconRoute, IconSales, IconStore,
+  IconAlert, IconBell, IconClients, IconContacts, IconDashboard, IconExpiry, IconForecast, IconLead,
+  IconMegaphone, IconMenu, IconPlug, IconRotation, IconShield, IconProduct, IconReports, IconRoute, IconSales, IconStore,
   IconTeam, IconTruck, IconVisit, IconX,
 } from "./icons";
+import { BrandTile } from "./brand-mark";
 
 type Item = { section: string; href: string; label: string; Icon: typeof IconDashboard };
 
@@ -16,6 +17,8 @@ const GROUPS: { title: string; items: Item[] }[] = [
     title: "Comercial",
     items: [
       { section: "dashboard", href: "/", label: "Panel", Icon: IconDashboard },
+      { section: "avisos", href: "/avisos", label: "Avisos", Icon: IconBell },
+      { section: "leads", href: "/leads", label: "Leads", Icon: IconLead },
       { section: "clientes", href: "/clientes", label: "Clientes", Icon: IconClients },
       { section: "contactos", href: "/contactos", label: "Contactos", Icon: IconContacts },
       { section: "tiendas", href: "/tiendas", label: "Tiendas", Icon: IconStore },
@@ -47,14 +50,23 @@ const GROUPS: { title: string; items: Item[] }[] = [
     ],
   },
   {
+    title: "Trade",
+    items: [
+      { section: "sellout", href: "/sell-out", label: "Sell out", Icon: IconRotation },
+      { section: "trade", href: "/trade", label: "Actividades de trade", Icon: IconMegaphone },
+    ],
+  },
+  {
     title: "Sistema",
     items: [
       { section: "conexiones", href: "/conexiones", label: "Conexiones API", Icon: IconPlug },
+      { section: "usuarios", href: "/usuarios", label: "Usuarios y permisos", Icon: IconShield },
     ],
   },
 ];
 
-export function Sidebar({ allowed, footer }: { allowed: string[]; footer: React.ReactNode }) {
+/** `badges`: contador junto a una sección (avisos sin leer), por clave de sección. */
+export function Sidebar({ allowed, footer, badges = {} }: { allowed: string[]; footer: React.ReactNode; badges?: Record<string, number> }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -71,7 +83,7 @@ export function Sidebar({ allowed, footer }: { allowed: string[]; footer: React.
               {group.title}
             </p>
             <ul className="flex flex-col gap-0.5">
-              {items.map(({ href, label, Icon }) => {
+              {items.map(({ section, href, label, Icon }) => {
                 const active = isActive(href);
                 return (
                   <li key={href}>
@@ -87,6 +99,11 @@ export function Sidebar({ allowed, footer }: { allowed: string[]; footer: React.
                     >
                       <Icon size={16} className="shrink-0" />
                       <span className="truncate">{label}</span>
+                      {badges[section] > 0 && (
+                        <span className="ml-auto rounded-full bg-[var(--brand)] px-1.5 text-[10.5px] font-semibold leading-[17px] text-[var(--text-inverse)] tabular">
+                          {badges[section] > 99 ? "99+" : badges[section]}
+                        </span>
+                      )}
                     </Link>
                   </li>
                 );
@@ -119,9 +136,7 @@ export function Sidebar({ allowed, footer }: { allowed: string[]; footer: React.
       >
         <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3.5">
           <Link href="/" className="flex items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--brand)] text-[13px] font-bold text-white">
-              FG
-            </span>
+            <BrandTile size={28} />
             <span className="leading-tight">
               <span className="block text-[13.5px] font-semibold">Fitt Global</span>
               <span className="block text-[10.5px] text-[var(--text-muted)]">Portal administrativo</span>

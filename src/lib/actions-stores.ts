@@ -5,6 +5,7 @@ import { requireRole } from "./auth";
 import { prisma } from "./prisma";
 import { applyStoreImport, planStoreImport, type ImportPreview } from "./store-import";
 import { geocodeBatch, parseCoordinates, type GeocodeBatch } from "./geocoding";
+import { notify } from "./notifications";
 
 export type ImportAnalysis = { error?: string; preview?: ImportPreview };
 export type ImportResult = {
@@ -43,7 +44,7 @@ export async function analizarImportacionTiendas(formData: FormData): Promise<Im
  * no viaje estado desde el navegador; todo ocurre en una sola transacción.
  */
 export async function importarTiendas(formData: FormData): Promise<ImportResult> {
-  await requireRole(IMPORT_ROLES);
+  const user = await requireRole(IMPORT_ROLES);
 
   let plan;
   try {
@@ -54,12 +55,21 @@ export async function importarTiendas(formData: FormData): Promise<ImportResult>
   }
 
   const result = await applyStoreImport(plan);
+  if (result.created) {
+    await notify({
+      type: "TIENDA_CREADA",
+      title: result.created === 1 ? "La importación creó 1 tienda" : `La importación creó ${result.created} tiendas`,
+      body: `${user.name} cargó el maestro de puntos de venta. Las tiendas nuevas quedan pendientes de ubicar.`,
+      href: "/tiendas/ubicar",
+      exceptUserId: user.id,
+    });
+  }
 
   revalidatePath("/tiendas");
   revalidatePath("/clientes");
   revalidatePath("/rutas");
   revalidatePath("/equipo");
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { done: result };
 }
 

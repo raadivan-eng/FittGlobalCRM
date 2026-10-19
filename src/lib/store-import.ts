@@ -87,7 +87,7 @@ const slug = (s: string) => norm(s).replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g
 
 const accents = (s: string) => (s.normalize("NFD").match(/[̀-ͯ]/g) ?? []).length;
 
-function cellText(v: ExcelJS.CellValue): string {
+export function cellText(v: ExcelJS.CellValue): string {
   if (v == null) return "";
   if (typeof v === "string") return v;
   if (typeof v === "number") return String(v);

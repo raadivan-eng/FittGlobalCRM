@@ -63,3 +63,9 @@ export const IconRefresh = base('<path d="M3.5 12a8.5 8.5 0 0 1 14.6-5.9L21 9"/>
 export const IconTruck = base('<path d="M2.5 6.5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1V16h-12z"/><path d="M14.5 9.5h3.6l3.4 3.6V16h-7z"/><circle cx="7" cy="17.5" r="2"/><circle cx="17.5" cy="17.5" r="2"/>');
 export const IconExternal = base('<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>');
 export const IconSparkle = base('<path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.9L12 18.5l-1.8-5.8-5.7-1.9L10.2 9z"/>');
+export const IconBell = base('<path d="M6 9.5a6 6 0 0 1 12 0c0 4.5 1.5 6.5 2.5 7.5h-17C4.5 16 6 14 6 9.5Z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>');
+export const IconShield = base('<path d="M12 3 4.5 6v5.5c0 4.4 3.2 8.3 7.5 9.5 4.3-1.2 7.5-5.1 7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/>');
+export const IconLead = base('<circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 11.2-4.5"/><path d="M18.5 14v6M15.5 17h6"/>');
+export const IconRotation = base('<path d="M3 3v18h18"/><path d="M7 15.5 10.5 12l3 2.5L20 8"/><path d="M16 8h4v4"/><circle cx="7" cy="19" r=".01"/>');
+export const IconMegaphone = base('<path d="M3.5 10v4a1 1 0 0 0 1 1H7l7.5 4.5V4.5L7 9H4.5a1 1 0 0 0-1 1Z"/><path d="M7.5 15 9 20.5h2.5"/><path d="M18 9a4 4 0 0 1 0 6"/>');
+export const IconUpload = base('<path d="M12 15.5V4"/><path d="m7 8.5 5-5 5 5"/><path d="M4 15v4a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 19v-4"/>');

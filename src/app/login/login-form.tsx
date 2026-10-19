@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { loginAction, type LoginState } from "@/lib/actions-auth";
 import { IconAlert, IconArrowRight, IconRoute, IconExpiry, IconForecast } from "@/components/icons";
+import { BrandTile } from "@/components/brand-mark";
 
 const HIGHLIGHTS = [
   { Icon: IconRoute, title: "Rutas con criterio", text: "El planificador ordena las visitas por urgencia real: frecuencia vencida, quiebres, novedades abiertas y peso en facturación." },
@@ -24,7 +25,7 @@ export function LoginForm() {
         />
         <div className="relative">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--brand)] text-[15px] font-bold text-white">FG</span>
+            <BrandTile size={36} className="rounded-xl" />
             <span className="text-[15px] font-semibold">Fitt Global</span>
           </div>
           <h1 className="mt-12 max-w-lg text-[34px] font-semibold leading-[1.15] tracking-[-0.022em]">
@@ -55,7 +56,7 @@ export function LoginForm() {
       <section className="flex items-center justify-center px-5 py-10">
         <div className="w-full max-w-[380px]">
           <div className="mb-7 lg:hidden">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--brand)] text-[15px] font-bold text-white">FG</span>
+            <BrandTile size={36} className="rounded-xl" />
           </div>
           <h2 className="text-[21px] font-semibold tracking-[-0.015em]">Ingresar al portal</h2>
           <p className="mt-1 text-[13px] text-[var(--text-secondary)]">Entra con tu correo corporativo. Lo que ves depende de tu rol.</p>

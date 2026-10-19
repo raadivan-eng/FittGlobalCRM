@@ -7,7 +7,7 @@ import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/pa
 import { Card, EmptyState, EnumBadge, PageHeader } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
-import { IconPin, IconPlus, IconStore } from "@/components/icons";
+import { IconPin, IconPlus, IconSearch, IconStore } from "@/components/icons";
 
 export const metadata = { title: "Tiendas" };
 export const dynamic = "force-dynamic";
@@ -78,6 +78,9 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
               <>
                 <Link href="/tiendas/ubicar" className="btn btn-secondary">
                   <IconPin size={14} /> Ubicar en el mapa
+                </Link>
+                <Link href="/tiendas/descubiertas" className="btn btn-secondary">
+                  <IconSearch size={14} /> Descubiertas en Maps
                 </Link>
                 <Link href="/tiendas/importar" className="btn btn-secondary">
                   <IconPlus size={14} /> Importar desde Excel

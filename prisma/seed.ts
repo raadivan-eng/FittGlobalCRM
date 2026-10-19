@@ -121,9 +121,23 @@ const INCIDENT_TEMPLATES = [
 async function main() {
   console.log("🧹 Limpiando base…");
   await prisma.$transaction([
+    prisma.notification.deleteMany(),
+    prisma.sellOut.deleteMany(),
+    prisma.sellOutImport.deleteMany(),
+    prisma.productAlias.deleteMany(),
+    prisma.tradeExecution.deleteMany(),
+    prisma.tradeActivityProduct.deleteMany(),
+    prisma.tradeActivity.deleteMany(),
+    prisma.leadEvent.deleteMany(),
+    prisma.leadStore.deleteMany(),
+    prisma.leadContact.deleteMany(),
+    prisma.lead.deleteMany(),
+    prisma.storeCandidate.deleteMany(),
+    prisma.locatorSearch.deleteMany(),
     prisma.shipmentEvent.deleteMany(),
     prisma.shipment.deleteMany(),
     prisma.apiConnectionEvent.deleteMany(),
+    prisma.apiConnectionModule.deleteMany(),
     prisma.apiConnection.deleteMany(),
     prisma.shelfReport.deleteMany(),
     prisma.incident.deleteMany(),
@@ -132,10 +146,12 @@ async function main() {
     prisma.salesOrderLine.deleteMany(),
     prisma.invoice.deleteMany(),
     prisma.salesOrder.deleteMany(),
+    prisma.forecastExclusion.deleteMany(),
     prisma.forecast.deleteMany(),
     prisma.inventoryLot.deleteMany(),
     prisma.warehouse.deleteMany(),
     prisma.product.deleteMany(),
+    prisma.storeContact.deleteMany(),
     prisma.contact.deleteMany(),
     prisma.store.deleteMany(),
     prisma.company.deleteMany(),
@@ -324,7 +340,7 @@ async function main() {
             phone: `+57 3${int(10, 25)} ${int(100, 999)} ${int(1000, 9999)}`,
             position: pick(["Jefe de tienda", "Administrador de punto", "Encargado de góndola"]),
             companyId: company.id,
-            storeId: store.id,
+            stores: { create: { storeId: store.id } },
             lastContactAt: chance(0.7) ? dayOffset(-int(1, 90)) : null,
           },
         });
@@ -347,6 +363,25 @@ async function main() {
           isDecisionMaker: i === 0 || chance(0.3),
           lastContactAt: chance(0.8) ? dayOffset(-int(1, 60)) : null,
           notes: i === 0 ? "Contacto principal para negociación de acuerdos comerciales." : null,
+        },
+      });
+    }
+
+    // Supervisor de zona de la cadena: un mismo contacto atiende varias tiendas.
+    const own = stores.filter((s) => s.companyId === company.id);
+    if (c.type === "CADENA" && own.length > 1) {
+      contactSeq++;
+      const zone = own[0].zone;
+      await prisma.contact.create({
+        data: {
+          firstName: pick(FIRST),
+          lastName: pick(LAST),
+          email: `contacto${contactSeq}@${c.code.toLowerCase()}.com.co`,
+          phone: `+57 3${int(10, 25)} ${int(100, 999)} ${int(1000, 9999)}`,
+          position: `Supervisor de zona ${zone}`,
+          companyId: company.id,
+          lastContactAt: dayOffset(-int(1, 30)),
+          stores: { create: own.filter((s) => s.zone === zone).slice(0, 6).map((s) => ({ storeId: s.id })) },
         },
       });
     }
@@ -558,6 +593,7 @@ async function main() {
             status,
             subtotal,
             discount,
+            net: total,
             tax,
             total: grand,
             createdById: company.ownerId ?? comercial.id,
@@ -581,14 +617,16 @@ async function main() {
               companyId: company.id,
               issueDate: date,
               dueDate,
+              net: total,
               total: grand,
               paidAmount: paid ? grand : chance(0.3) ? round2(grand * 0.5) : 0,
               status: paid ? "PAGADA" : overdue ? "VENCIDA" : chance(0.3) ? "PARCIAL" : "EMITIDA",
             },
           });
-          monthlyReal.set(period, (monthlyReal.get(period) ?? 0) + grand);
+          // El forecast se mide sin IVA.
+          monthlyReal.set(period, (monthlyReal.get(period) ?? 0) + total);
           const key = `${period}|${company.id}`;
-          companyPeriodReal.set(key, (companyPeriodReal.get(key) ?? 0) + grand);
+          companyPeriodReal.set(key, (companyPeriodReal.get(key) ?? 0) + total);
         }
       }
     }
@@ -649,9 +687,9 @@ async function main() {
   const billing = await prisma.invoice.groupBy({
     by: ["companyId"],
     where: { issueDate: { gte: since }, status: { not: "ANULADA" } },
-    _sum: { total: true },
+    _sum: { net: true },
   });
-  const ranked = billing.map((b) => ({ id: b.companyId, total: b._sum.total ?? 0 })).sort((a, b) => b.total - a.total);
+  const ranked = billing.map((b) => ({ id: b.companyId, total: b._sum.net ?? 0 })).sort((a, b) => b.total - a.total);
   const grand = ranked.reduce((s, r) => s + r.total, 0);
   let acc = 0;
   for (const row of ranked) {
@@ -745,6 +783,241 @@ async function main() {
     });
   }
   console.log(`🚚 ${shipmentSeq} guías de envío`);
+
+  // ── Leads: prospectos por medios y por sales hunt ──────────────────────────
+  // Ninguno ganado: un lead ganado necesita su cliente, y la demo ya tiene los suyos.
+  const LEAD_SPECS = [
+    { source: "SALES_HUNT", name: "Minimercado La 70", city: "Medellín", format: "MINIMARKET", status: "NEGOCIACION", temp: "CALIENTE", close: 0 },
+    { source: "SALES_HUNT", name: "Autoservicio El Trébol", city: "Bogotá", format: "SUPERMERCADO", status: "CALIFICADO", temp: "CALIENTE", close: 1 },
+    { source: "SALES_HUNT", name: "Droguería Vida Sana", city: "Cali", format: "FARMACIA", status: "CONTACTADO", temp: "TIBIO", close: null },
+    { source: "SALES_HUNT", name: "Supermercado Los Almendros", city: "Bogotá", format: "SUPERMERCADO", status: "NEGOCIACION", temp: "CALIENTE", close: 0 },
+    { source: "SALES_HUNT", name: "Tienda Naturista Raíces", city: "Medellín", format: "ESPECIALIZADA", status: "NUEVO", temp: "FRIO", close: null },
+    { source: "SALES_HUNT", name: "Granero La Esperanza", city: "Cali", format: "BODEGA", status: "PERDIDO", temp: "FRIO", close: null, lost: "Compra todo a un mayorista de la zona" },
+    { source: "SALES_HUNT", name: "Mercados Doña Rosa", city: "Bogotá", format: "MINIMARKET", status: "CONTACTADO", temp: "TIBIO", close: 2 },
+    { source: "SALES_HUNT", name: "Fitness Store Laureles", city: "Medellín", format: "ESPECIALIZADA", status: "CALIFICADO", temp: "CALIENTE", close: 1 },
+    { source: "FACEBOOK", name: "Distribuidora San Judas", city: "Bogotá", format: "MAYORISTA", status: "NEGOCIACION", temp: "CALIENTE", close: 0, detail: "Campaña Mayoristas Q4 · Formulario distribuidores" },
+    { source: "FACEBOOK", name: "Cafetería El Molino", city: "Cali", format: null, status: "NUEVO", temp: "FRIO", close: null, detail: "Campaña Mayoristas Q4 · Formulario distribuidores" },
+    { source: "FACEBOOK", name: "Supermercado Mi Barrio", city: "Medellín", format: "SUPERMERCADO", status: "CONTACTADO", temp: "TIBIO", close: null, detail: "Campaña Tenderos · Formulario tiendas" },
+    { source: "INSTAGRAM", name: "Box Funcional Norte", city: "Bogotá", format: "ESPECIALIZADA", status: "CALIFICADO", temp: "TIBIO", close: 2, detail: "Campaña Fitness · Formulario gimnasios" },
+    { source: "INSTAGRAM", name: "Nutrición Activa", city: "Medellín", format: "ESPECIALIZADA", status: "NUEVO", temp: "FRIO", close: null, detail: "Anuncio que abre WhatsApp: Lleva la línea fit a tu tienda" },
+    { source: "WHATSAPP", name: "Minimarket Express 24", city: "Bogotá", format: "MINIMARKET", status: "CONTACTADO", temp: "CALIENTE", close: 1, detail: "Escribió directo a WhatsApp Business" },
+    { source: "WHATSAPP", name: "+573104558812", city: null, format: null, status: "NUEVO", temp: "FRIO", close: null, detail: "Escribió directo a WhatsApp Business" },
+    { source: "WHATSAPP", name: "Hotel Casa Prado", city: "Cali", format: null, status: "PERDIDO", temp: "FRIO", close: null, detail: "Escribió directo a WhatsApp Business", lost: "Sólo buscaba precio al detal" },
+    { source: "WEB", name: "Comercializadora Andina del Sur", city: "Cali", format: "MAYORISTA", status: "CALIFICADO", temp: "TIBIO", close: null, detail: "Formulario de contacto" },
+    { source: "WEB", name: "Tiendas Saludables Express", city: "Bogotá", format: "ESPECIALIZADA", status: "NUEVO", temp: "FRIO", close: null, detail: "Formulario de contacto" },
+    { source: "DIRECTO", name: "Superete La Floresta", city: "Medellín", format: "MINIMARKET", status: "NEGOCIACION", temp: "CALIENTE", close: 0, detail: "Referido de Minimercados La Esquina" },
+    { source: "DIRECTO", name: "Restaurante Grano y Leña", city: "Bogotá", format: null, status: "PERDIDO", temp: "FRIO", close: null, detail: "Llamó al conmutador", lost: "Volumen muy bajo para despacho" },
+  ] as const;
+  const FIRST_MESSAGES: Record<string, string[]> = {
+    FACEBOOK: ["nombre completo: {c}\nnombre de la empresa: {n}\nciudad: {city}\n¿cuántos puntos de venta tienes?: 1 a 3"],
+    INSTAGRAM: ["Hola, vi el anuncio. ¿Venden al por mayor para tiendas fitness?", "nombre completo: {c}\nnombre de la empresa: {n}\n¿qué productos te interesan?: proteína y snacks"],
+    WHATSAPP: ["Buenas tardes, ¿cuál es el pedido mínimo para distribuir sus productos?", "Hola, quiero la lista de precios mayoristas"],
+    WEB: ["Somos una comercializadora y queremos incluir su portafolio. ¿Con quién hablamos?", "Me interesa ser distribuidor en mi ciudad"],
+  };
+  const FOLLOW_UPS = [
+    "Se le envió portafolio y lista de precios por WhatsApp.",
+    "Visita al punto: tiene espacio en góndola para dos referencias.",
+    "Pide condiciones de pago a 30 días para el primer pedido.",
+    "Quedó de confirmar el pedido de arranque la próxima semana.",
+  ];
+  const leadOwners = [comercial, admin];
+  let leadSeq = 0;
+  for (const spec of LEAD_SPECS) {
+    leadSeq++;
+    const owner = spec.status === "NUEVO" && chance(0.6) ? null : pick(leadOwners);
+    const created = new Date(now.getTime() - int(2, 75) * 86_400_000 - int(0, 10) * 3_600_000);
+    const hunt = spec.source === "SALES_HUNT";
+    const contact = `${pick(FIRST)} ${pick(LAST)}`;
+    const geo = spec.city ? GEO[spec.city] : null;
+    const closeDate = spec.close != null ? new Date(TODAY.getFullYear(), TODAY.getMonth() + spec.close, 1) : null;
+    const phone = spec.name.startsWith("+") ? spec.name : `+573${int(10, 25)}${int(1000000, 9999999)}`;
+    const events: { type: string; body: string; source: string; userId: string | null; occurredAt: Date }[] = [];
+    if (hunt) {
+      events.push({ type: "CREADO", body: "Sales hunt: ubicación marcada a mano", source: "MANUAL", userId: owner?.id ?? comercial.id, occurredAt: created });
+    } else if (spec.source === "DIRECTO") {
+      events.push({ type: "CREADO", body: "Registrado a mano · llegó por Directo", source: "MANUAL", userId: owner?.id ?? comercial.id, occurredAt: created });
+    } else {
+      const body = pick(FIRST_MESSAGES[spec.source]).replace("{c}", contact).replace("{n}", spec.name).replace("{city}", spec.city ?? "");
+      events.push({ type: "CREADO", body, source: "API", userId: null, occurredAt: created });
+    }
+    let t = created.getTime();
+    const steps = ["NUEVO", "CONTACTADO", "CALIFICADO", "NEGOCIACION"].indexOf(spec.status === "PERDIDO" ? "CONTACTADO" : spec.status);
+    for (let k = 0; k < steps; k++) {
+      t = Math.min(now.getTime() - 3_600_000, t + int(1, 9) * 86_400_000);
+      events.push({ type: "NOTA", body: FOLLOW_UPS[k % FOLLOW_UPS.length], source: "MANUAL", userId: owner?.id ?? comercial.id, occurredAt: new Date(t) });
+      if (spec.source === "WHATSAPP" && k === 0) {
+        events.push({ type: "MENSAJE", body: "Gracias, lo reviso con mi socio y les confirmo.", source: "API", userId: null, occurredAt: new Date(t + 2 * 3_600_000) });
+      }
+    }
+    if (spec.status === "PERDIDO") {
+      t = Math.min(now.getTime() - 3_600_000, t + int(2, 6) * 86_400_000);
+      events.push({ type: "ESTADO", body: `Estado: Contactado → Perdido · Motivo: ${"lost" in spec ? spec.lost : ""}`, source: "MANUAL", userId: owner?.id ?? comercial.id, occurredAt: new Date(t) });
+    } else if (spec.temp === "CALIENTE") {
+      events.push({ type: "ESTADO", body: "Temperatura: Tibio → Caliente", source: "MANUAL", userId: owner?.id ?? comercial.id, occurredAt: new Date(t + 3_600_000) });
+    }
+    const last = events.reduce((m, e) => (e.occurredAt > m ? e.occurredAt : m), created);
+    await prisma.lead.create({
+      data: {
+        code: `LD-${String(leadSeq).padStart(5, "0")}`,
+        entry: hunt ? "SALES_HUNT" : "INBOUND",
+        source: spec.source,
+        sourceDetail: hunt ? "Ubicación marcada a mano" : "detail" in spec ? spec.detail : null,
+        externalId: spec.source === "WHATSAPP" ? `wa:${phone.slice(1)}` : null,
+        status: spec.status,
+        temperature: spec.temp,
+        name: spec.name,
+        stores: {
+          create: {
+            name: spec.name,
+            city: spec.city,
+            address: hunt ? `Calle ${int(10, 120)} # ${int(5, 90)}-${int(10, 99)}` : null,
+            format: spec.format,
+            lat: hunt && geo ? round2((geo.lat + (rnd() - 0.5) * 0.08) * 1e4) / 1e4 : null,
+            lng: hunt && geo ? round2((geo.lng + (rnd() - 0.5) * 0.08) * 1e4) / 1e4 : null,
+            createdAt: created,
+          },
+        },
+        contacts: {
+          create: {
+            name: spec.name.startsWith("+") ? phone : contact,
+            phone,
+            email: spec.source === "WEB" || spec.source === "FACEBOOK" ? `${contact.split(" ")[0].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}@correo.com` : null,
+            createdAt: created,
+          },
+        },
+        closePeriod: closeDate ? periodKey(closeDate) : null,
+        expectedValue: closeDate || spec.temp !== "FRIO" ? int(15, 90) * 100 : null,
+        lostReason: "lost" in spec ? spec.lost : null,
+        ownerId: owner?.id ?? null,
+        createdById: hunt || spec.source === "DIRECTO" ? (owner?.id ?? comercial.id) : null,
+        lastActivityAt: last,
+        createdAt: created,
+        events: { create: events },
+      },
+    });
+  }
+  console.log(`🎯 ${leadSeq} leads`);
+
+  // ── Trade: actividades con las cadenas y su sell-out ───────────────────────
+  // Sólo las cadenas reportan sell-out, y sólo de meses cerrados. Donde una
+  // actividad quedó implementada se vende más en sus meses: así el detalle de
+  // cada actividad tiene un efecto que medir contra el resto de tiendas.
+  const chains = companies.filter((c) => c.type === "CADENA");
+  const noonBogota = (monthsFromNow: number, day: number) => {
+    const first = new Date(TODAY.getFullYear(), TODAY.getMonth() + monthsFromNow, 1);
+    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    return new Date(Date.UTC(first.getFullYear(), first.getMonth(), Math.min(day, last), 17));
+  };
+  const bySku = (prefix: string) => products.filter((p) => p.sku.startsWith(prefix)).map((p) => p.id);
+
+  const TRADE_SPECS = [
+    { type: "PROMOCION", title: "Regreso a clases — jugos Frutal", mechanic: "Pague 2 lleve 3 en jugos Frutal 1 L", skus: "BEB-02", from: [-6, 1], to: [-5, 31], status: "CERRADA", boost: 0.38, impl: 0.72, budget: 4200 },
+    { type: "EXHIBICION", title: "Punta de góndola snacks — temporada de fútbol", mechanic: "Punta de góndola con Crock y Nutty, precio especial 10 %", skus: "SNK-0", from: [-4, 1], to: [-3, 30], status: "CERRADA", boost: 0.27, impl: 0.6, budget: 6800 },
+    { type: "DEGUSTACION", title: "Degustación yogurt griego Pradera", mechanic: "Impulsadora viernes y sábado, 10 a. m. a 6 p. m.", skus: "LAC-0202", from: [-2, 5], to: [-2, 28], status: "APROBADA", boost: 0.22, impl: 0.55, budget: 2600 },
+    { type: "PROMOCION", title: "Cuidado capilar Vitalé — 20 % en la segunda unidad", mechanic: "20 % de descuento en la segunda unidad de shampoo o acondicionador", skus: "CPE-01", from: [-1, 1], to: [1, 15], status: "APROBADA", boost: 0.3, impl: 0.5, budget: 5400 },
+    { type: "MATERIAL_POP", title: "Rompetráficos Energizante Volt", mechanic: "Rompetráfico y cenefa en nevera de bebidas frías", skus: "BEB-04", from: [0, 1], to: [1, 30], status: "APROBADA", boost: 0.15, impl: 0.35, budget: 1500 },
+    { type: "CATALOGO", title: "Encarte de fin de año — abarrotes Sembrado", mechanic: "Página completa en el encarte de diciembre", skus: "ABA-01", from: [1, 1], to: [2, 10], status: "APROBADA", boost: 0, impl: 0, budget: 7200 },
+    { type: "ACTIVACION", title: "Activación de marca Andina en centros comerciales", mechanic: "Stand con muestreo y premio por compra", skus: "BEB-01", from: [1, 10], to: [1, 25], status: "PLANEADA", boost: 0, impl: 0, budget: 9800 },
+    { type: "PROMOCION", title: "Combo aseo Brisa", mechanic: "Detergente + limpiador con 15 % de descuento", skus: "ASE-0", from: [-3, 1], to: [-3, 30], status: "CANCELADA", boost: 0, impl: 0, budget: 0 },
+  ] as const;
+
+  const checkers = [...supervisors, comercial];
+  // Qué tiendas implementaron qué productos en qué meses, para el sell-out.
+  const boosted = new Map<string, number>();
+  let tradeSeq = 0;
+  for (const [i, spec] of TRADE_SPECS.entries()) {
+    tradeSeq++;
+    const company = chains[i % chains.length];
+    const startDate = noonBogota(spec.from[0], spec.from[1]);
+    const endDate = noonBogota(spec.to[0], spec.to[1]);
+    const productIds = bySku(spec.skus);
+    const companyStores = stores.filter((st) => st.companyId === company.id);
+    const started = startDate <= TODAY && ["APROBADA", "CERRADA"].includes(spec.status);
+    const finished = endDate < TODAY;
+
+    const activity = await prisma.tradeActivity.create({
+      data: {
+        code: `TR-${String(tradeSeq).padStart(5, "0")}`,
+        type: spec.type,
+        status: spec.status,
+        title: spec.title,
+        mechanic: spec.mechanic,
+        companyId: company.id,
+        startDate,
+        endDate,
+        budget: spec.budget,
+        ownerId: comercial.id,
+        createdById: comercial.id,
+        closingNote: spec.status === "CERRADA" ? "Funcionó donde hubo exhibición completa; las tiendas sin material casi no movieron. Repetir con material enviado una semana antes." : null,
+        createdAt: new Date(startDate.getTime() - 20 * 86_400_000),
+        products: { create: productIds.map((productId) => ({ productId })) },
+      },
+    });
+
+    for (const st of companyStores) {
+      // Las vigentes aún tienen tiendas sin visitar; las que no empezaron, todas.
+      const checked = started && (finished || chance(0.65));
+      const roll = rnd();
+      const status = !checked ? "PENDIENTE" : roll < spec.impl ? "IMPLEMENTADA" : roll < spec.impl + 0.15 ? "PARCIAL" : "NO_IMPLEMENTADA";
+      await prisma.tradeExecution.create({
+        data: {
+          activityId: activity.id,
+          storeId: st.id,
+          status,
+          notes: status === "PARCIAL" ? pick(["Falta el precio especial en el sistema", "Sin material POP", "Exhibición más pequeña de lo pactado"]) : status === "NO_IMPLEMENTADA" ? pick(["El jefe de tienda no tenía la instrucción", "Sin espacio: la punta la tiene la competencia", "Producto agotado"]) : null,
+          checkedAt: checked ? new Date(Math.min(TODAY.getTime(), startDate.getTime() + int(2, 9) * 86_400_000)) : null,
+          checkedById: checked ? pick(checkers).id : null,
+        },
+      });
+      if (status === "IMPLEMENTADA" || status === "PARCIAL") {
+        const factor = status === "IMPLEMENTADA" ? spec.boost : spec.boost / 2;
+        for (let m = spec.from[0]; m <= spec.to[0]; m++) {
+          for (const productId of productIds) boosted.set(`${st.id}|${productId}|${periodKey(new Date(TODAY.getFullYear(), TODAY.getMonth() + m, 1))}`, factor);
+        }
+      }
+    }
+  }
+
+  let sellOutRows = 0;
+  for (const company of chains) {
+    const record = await prisma.sellOutImport.create({
+      data: {
+        companyId: company.id,
+        fileName: "SELL OUT demo.xlsx",
+        sheet: company.name.split(" ")[0].toUpperCase(),
+        periods: Array.from({ length: 13 }, (_, i) => periodKey(new Date(TODAY.getFullYear(), TODAY.getMonth() - 13 + i, 1))).join(","),
+        rows: 0,
+        units: 0,
+        userId: comercial.id,
+        createdAt: new Date(TODAY.getFullYear(), TODAY.getMonth(), 3, 9),
+      },
+    });
+    const companyStores = stores.filter((st) => st.companyId === company.id);
+    const rows: { period: string; companyId: string; storeId: string; productId: string; units: number; amount: number; importId: string }[] = [];
+    for (const st of companyStores) {
+      const [lo, hi] = st.tier === "A" ? [16, 42] : st.tier === "B" ? [7, 22] : [3, 11];
+      const portfolio = products.filter(() => chance(0.6));
+      const base = new Map(portfolio.map((p) => [p.id, int(lo, hi)]));
+      // Una de cada doce tiendas dejó de rotar el último mes: quiebre que el portal delata.
+      const stopped = chance(1 / 12);
+      for (let monthsAgo = 13; monthsAgo >= 1; monthsAgo--) {
+        if (stopped && monthsAgo === 1) continue;
+        const ref = new Date(TODAY.getFullYear(), TODAY.getMonth() - monthsAgo, 1);
+        const period = periodKey(ref);
+        const seasonal = 1 + 0.12 * Math.sin(((ref.getMonth() + 1) / 12) * Math.PI * 2) + (13 - monthsAgo) * 0.01;
+        for (const p of portfolio) {
+          const lift = 1 + (boosted.get(`${st.id}|${p.id}|${period}`) ?? 0);
+          const units = Math.max(0, Math.round(base.get(p.id)! * seasonal * lift * (0.78 + rnd() * 0.44)));
+          if (!units) continue;
+          rows.push({ period, companyId: company.id, storeId: st.id, productId: p.id, units, amount: round2(units * p.unitPrice * 1.32), importId: record.id });
+        }
+      }
+    }
+    await prisma.sellOut.createMany({ data: rows });
+    await prisma.sellOutImport.update({ where: { id: record.id }, data: { rows: rows.length, units: rows.reduce((t, r) => t + r.units, 0) } });
+    sellOutRows += rows.length;
+  }
+  console.log(`🛒 ${tradeSeq} actividades de trade · ${sellOutRows} filas de sell-out`);
 
   // ── Conexiones externas ────────────────────────────────────────────────────
   // Se crean vacías a propósito: las credenciales reales las carga el

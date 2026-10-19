@@ -24,7 +24,7 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
       ? { OR: [{ firstName: { contains: q } }, { lastName: { contains: q } }, { email: { contains: q } }, { position: { contains: q } }] }
       : {}),
     ...(companyId ? { companyId } : {}),
-    ...(scope === "CORPORATIVO" ? { storeId: null } : scope === "TIENDA" ? { storeId: { not: null } } : {}),
+    ...(scope === "CORPORATIVO" ? { stores: { none: {} } } : scope === "TIENDA" ? { stores: { some: {} } } : {}),
   };
 
   const [contacts, total, companies] = await Promise.all([
@@ -33,7 +33,7 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
       orderBy: [{ isPrimary: "desc" }, { lastName: "asc" }],
       skip,
       take,
-      include: { company: { select: { id: true, name: true, tier: true } }, store: { select: { id: true, name: true, zone: true } } },
+      include: { company: { select: { id: true, name: true, tier: true } }, stores: { include: { store: { select: { id: true, name: true } } } } },
     }),
     prisma.contact.count({ where }),
     prisma.company.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
@@ -43,7 +43,7 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
     <>
       <PageHeader
         title="Contactos"
-        subtitle="Las personas detrás de cada cliente. Un contacto siempre pertenece a una empresa y puede estar además vinculado a un punto de venta concreto."
+        subtitle="Las personas detrás de cada cliente. Un contacto pertenece a un solo cliente y puede atender varias de sus tiendas; sin tiendas es corporativo."
         actions={<span className="badge badge-neutral">{fmtNumber(total)} contactos</span>}
       />
 
@@ -75,7 +75,7 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
                     <th>Contacto</th>
                     <th>Cargo</th>
                     <th>Cliente</th>
-                    <th>Punto de venta</th>
+                    <th>Tiendas</th>
                     <th>Datos</th>
                     <th>Último contacto</th>
                   </tr>
@@ -106,10 +106,15 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
                         </Link>
                       </td>
                       <td className="text-[var(--text-secondary)]">
-                        {c.store ? (
-                          <Link href={`/tiendas/${c.store.id}`} className="hover:text-[var(--brand)] hover:underline">
-                            {c.store.name}
-                          </Link>
+                        {c.stores.length ? (
+                          c.stores.map((sc, i) => (
+                            <span key={sc.storeId}>
+                              {i > 0 && ", "}
+                              <Link href={`/tiendas/${sc.store.id}`} className="hover:text-[var(--brand)] hover:underline">
+                                {sc.store.name}
+                              </Link>
+                            </span>
+                          ))
                         ) : (
                           <span className="badge badge-neutral">Corporativo</span>
                         )}

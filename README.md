@@ -4,8 +4,9 @@ Portal interno para una comercializadora mayorista. Cubre tres frentes que en la
 mayoría de las empresas viven en hojas de cálculo separadas:
 
 1. **CRM de clientes y puntos de venta.** Empresas (cadenas, mayoristas,
-   independientes, HORECA) que agrupan tiendas y contactos. Un contacto siempre
-   pertenece a una empresa y puede estar además vinculado a una tienda concreta.
+   independientes, HORECA) que agrupan tiendas y contactos. Un contacto
+   pertenece a un solo cliente y puede atender varias de sus tiendas; sin
+   tiendas es un contacto corporativo.
 2. **Trade marketing en calle.** Mercaderistas con cartera asignada, rutas
    priorizadas, visitas con check-in/check-out, medición de góndola y novedades.
 3. **Decisión comercial.** Forecast contra facturación, rankings de producto,
@@ -92,6 +93,63 @@ distancia haversine × 1,3 a 22 km/h más 4 minutos fijos por parada.
 
 El plan resultante se convierte en visitas reales con un botón, de forma
 idempotente: reagendar el mismo día no duplica visitas.
+
+## El localizador de tiendas
+
+Mantiene el maestro al día contra Google Maps, que es donde las grandes
+superficies publican sus sedes. [src/lib/store-locator.ts](src/lib/store-locator.ts)
+busca la marca de cada cadena (tipo `CADENA` con marca conocida en `BRANDS` de
+`geocoding.ts`) en cada ciudad donde ya tiene tiendas, con Places API. Si una
+ciudad llena los 60 resultados que Google entrega por búsqueda, se parte en
+cuadrantes.
+
+Cada lugar encontrado se casa con el maestro, en este orden: a menos de 150 m
+de una tienda ubicada, por la placa de la dirección, o porque todo lo que
+distingue a la sede («MENGA», «CALLE 100») aparece en el nombre o la dirección
+de Google. Lo que casa sin ambigüedad se vincula y, si no tenía coordenadas,
+las toma: el localizador también geocodifica. Lo demás queda en
+`/tiendas/descubiertas` para crearlo, vincularlo a mano o descartarlo, y llega
+un aviso a administradores y supervisores. Lo descartado no vuelve a avisarse.
+
+Corre solo con el cron del Worker ([worker.ts](worker.ts), 06:00 de Bogotá):
+cada día repasa las búsquedas de más de una semana, en tandas cortas por
+`/api/cron/localizador` para quedar dentro de los límites de cada invocación.
+
+## Leads
+
+Negocios que todavía no son clientes y se quieren convertir (`/leads`, para
+ADMIN y COMERCIAL). Entran por dos caminos:
+
+1. **Por un medio.** Llegan solos por API y avisan al equipo comercial:
+   - *Facebook e Instagram*: formularios de Lead Ads. Meta los avisa al webhook
+     `/api/webhooks/meta` (campo `leadgen`) y el botón «Sincronizar formularios»
+     trae los de los últimos 30 días por si alguno no llegó.
+   - *WhatsApp Business*: el mismo webhook, campo `messages`. Si la persona
+     escribe desde un anuncio «clic a WhatsApp», Meta manda el `referral` y el
+     lead queda con Facebook o Instagram de origen; si escribe directo, queda
+     como WhatsApp. Sus mensajes siguientes se suman a la bitácora del lead.
+   - *Sitio web*: el formulario de contacto publica en `/api/leads/web`.
+   - *Directo* (llamada, correo, visita): se registra a mano.
+2. **Sales hunt.** Lo busca el comercial y siempre arranca por la ubicación de
+   la tienda: se elige en Google Maps (Places API) o se pegan sus coordenadas.
+   Si el lugar ya es tienda de un cliente o ya es lead, el portal lo dice.
+
+**Tiendas y contactos.** Un lead nace con al menos una tienda y un contacto, y
+en su ficha se agregan más. Los que llegan solos por un medio arrancan con una
+tienda provisional (el nombre del negocio, sin ubicar) y con quien escribió como
+contacto. No se puede quitar la última tienda ni el último contacto.
+
+Quien ya es lead —mismo id en Meta, o el teléfono o el correo de uno de sus
+contactos— no se duplica. La URL y
+el token del webhook y la clave del formulario web están al pie de `/leads`
+(sólo ADMIN); el webhook exige la clave secreta de la app en la conexión Meta.
+
+**Forecast.** Un lead `CALIENTE` abierto con mes tentativo de cierre y valor
+suma ese valor al forecast de su mes: en Forecast, en el gráfico contra
+facturación y en el avance del panel. Al convertirlo en cliente se crea la
+empresa con las tiendas y los contactos del lead que se elijan (al menos uno de
+cada), cada contacto vinculado a cada tienda, y el valor pasa a forecast manual
+del cliente nuevo para ese mes, así el total no cae al ganarse.
 
 ## Control de vencimientos
 

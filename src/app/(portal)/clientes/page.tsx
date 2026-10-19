@@ -9,6 +9,7 @@ import { Card, EmptyState, EnumBadge, PageHeader } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
 import { IconClients } from "@/components/icons";
+import { ClassificationGuide } from "./classification-guide";
 
 export const metadata = { title: "Clientes" };
 export const dynamic = "force-dynamic";
@@ -50,7 +51,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
     prisma.invoice.groupBy({
       by: ["companyId"],
       where: { companyId: { in: ids }, issueDate: { gte: since }, status: NOT_VOID },
-      _sum: { total: true },
+      _sum: { net: true },
     }),
     prisma.invoice.findMany({
       where: { companyId: { in: ids }, status: { in: ["EMITIDA", "PARCIAL", "VENCIDA"] } },
@@ -58,7 +59,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
     }),
   ]);
 
-  const billed = new Map(billing.map((b) => [b.companyId, b._sum.total ?? 0]));
+  const billed = new Map(billing.map((b) => [b.companyId, b._sum.net ?? 0]));
   const owed = new Map<string, number>();
   for (const i of pending) owed.set(i.companyId, (owed.get(i.companyId) ?? 0) + (i.total - i.paidAmount));
 
@@ -69,6 +70,8 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
         subtitle="Empresas y cadenas que compran al por mayor. Cada una agrupa sus puntos de venta y sus contactos."
         actions={<span className="badge badge-neutral">{fmtNumber(total)} activos</span>}
       />
+
+      <ClassificationGuide />
 
       <Filters
         fields={[
@@ -110,8 +113,8 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
                           {c.code} · {c.city ?? "—"} · {c.paymentTermDays} días
                         </p>
                       </td>
-                      <td><EnumBadge option={COMPANY_TYPES.get(c.type)} /></td>
-                      <td className="text-[var(--text-secondary)]">{CHANNELS.label(c.channel)}</td>
+                      <td title={COMPANY_TYPES.get(c.type).hint}><EnumBadge option={COMPANY_TYPES.get(c.type)} /></td>
+                      <td className="text-[var(--text-secondary)]" title={CHANNELS.get(c.channel).hint}>{CHANNELS.label(c.channel)}</td>
                       <td><EnumBadge option={TIERS.get(c.tier)} /></td>
                       <td className="num">{c._count.stores}</td>
                       <td className="num">{c._count.contacts}</td>

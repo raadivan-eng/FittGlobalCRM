@@ -4,9 +4,10 @@ import { CATEGORIES, PROVIDERS } from "@/lib/integrations";
 import { carrierAdapter } from "@/lib/carriers";
 import { CONNECTION_EVENTS, CONNECTION_STATUS } from "@/lib/enums";
 import { fmtDateTime } from "@/lib/format";
+import { decryptJson } from "@/lib/secrets";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, SectionTitle, StatTile } from "@/components/ui";
 import { IconCheck, IconClock, IconPlug } from "@/components/icons";
-import { ConnectionCard, type ConnectionView } from "./connection-card";
+import { ConnectionCard, type ConnectionView, type ModuleView } from "./connection-card";
 
 export const metadata = { title: "Conexiones API" };
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export default async function ConexionesPage() {
   await requireSection("conexiones");
 
   const [rows, events] = await Promise.all([
-    prisma.apiConnection.findMany(),
+    prisma.apiConnection.findMany({ include: { modules: true } }),
     prisma.apiConnectionEvent.findMany({
       orderBy: { createdAt: "desc" },
       take: 15,
@@ -42,9 +43,27 @@ export default async function ConexionesPage() {
       lastDetail: row?.lastDetail ?? null,
       lastError: row?.lastError ?? null,
     };
+    const modules: ModuleView[] | undefined = provider.modules?.map((m) => {
+      const fila = row?.modules.find((f) => f.module === m.key);
+      // Antes de los módulos, el Partner-ID de Siigo se guardaba cifrado junto a
+      // la clave: mientras nadie vuelva a guardar, se muestra en Facturación.
+      const heredado = !row?.modules.length && m.key === "FACTURACION" ? decryptJson(row?.secretCipher)?.extra : undefined;
+      // Un módulo que nunca se guardó arranca prendido: el formulario pide su Partner-ID.
+      const enabled = fila?.enabled ?? true;
+      return {
+        key: m.key,
+        partnerId: fila?.partnerId ?? heredado ?? null,
+        enabled,
+        status: enabled ? (fila?.status ?? (heredado ? "PENDIENTE" : "SIN_CONFIGURAR")) : "INACTIVO",
+        lastCheck: fila?.lastCheckAt ? fmtDateTime(fila.lastCheckAt) : null,
+        lastSync: fila?.lastSyncAt ? fmtDateTime(fila.lastSyncAt) : null,
+        lastDetail: fila?.lastDetail ?? null,
+        lastError: fila?.lastError ?? null,
+      };
+    });
     // Una transportadora sin adaptador acepta credenciales, pero no hay contra qué probarlas.
     const ready = provider.kind !== "TRANSPORTE" || Boolean(carrierAdapter(provider.key));
-    return { provider, view, ready };
+    return { provider, view, ready, modules };
   });
   // El color sigue el orden fijo dentro de cada tipo (servicios, transportadoras),
   // no dentro de la categoría: así dos servicios nunca comparten tono.
@@ -89,7 +108,7 @@ export default async function ConexionesPage() {
         />
         <StatTile
           label="Pruebas registradas"
-          value={events.filter((e) => e.action === "Prueba de conexión").length}
+          value={events.filter((e) => e.action.startsWith("Prueba")).length}
           hint="En la bitácora reciente"
           icon={<IconCheck size={15} />}
         />
@@ -110,13 +129,14 @@ export default async function ConexionesPage() {
             </SectionTitle>
             <p className="-mt-2 mb-3 max-w-3xl text-[12.5px] text-[var(--text-secondary)]">{group.description}</p>
             <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {group.cards.map(({ provider, view, ready }) => (
+              {group.cards.map(({ provider, view, ready, modules }) => (
                 <ConnectionCard
                   key={provider.key}
                   provider={provider}
                   color={colorOf.get(provider.key)!}
                   state={view}
                   ready={ready}
+                  modules={modules}
                 />
               ))}
             </div>

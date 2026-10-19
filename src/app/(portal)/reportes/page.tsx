@@ -49,7 +49,7 @@ export default async function ReportesPage({ searchParams }: { searchParams: Sea
     topStores(from, to, 12),
     prisma.invoice.findMany({
       where: { issueDate: { gte: from, lt: to }, status: NOT_VOID },
-      select: { total: true, company: { select: { channel: true, tier: true, city: true } } },
+      select: { net: true, company: { select: { channel: true, tier: true, city: true } } },
     }),
     prisma.incident.groupBy({ by: ["type"], where: { createdAt: { gte: from, lt: to } }, _count: true }),
     prisma.visit.findMany({
@@ -66,9 +66,9 @@ export default async function ReportesPage({ searchParams }: { searchParams: Sea
   const byTier = new Map<string, number>();
   const byCity = new Map<string, number>();
   for (const i of invoices) {
-    byChannel.set(i.company.channel, (byChannel.get(i.company.channel) ?? 0) + i.total);
-    byTier.set(i.company.tier, (byTier.get(i.company.tier) ?? 0) + i.total);
-    if (i.company.city) byCity.set(i.company.city, (byCity.get(i.company.city) ?? 0) + i.total);
+    byChannel.set(i.company.channel, (byChannel.get(i.company.channel) ?? 0) + i.net);
+    byTier.set(i.company.tier, (byTier.get(i.company.tier) ?? 0) + i.net);
+    if (i.company.city) byCity.set(i.company.city, (byCity.get(i.company.city) ?? 0) + i.net);
   }
 
   const zoneStats = new Map<string, { planned: number; completed: number; oos: number; audited: number }>();
@@ -97,7 +97,7 @@ export default async function ReportesPage({ searchParams }: { searchParams: Sea
     categoryOos.set(s.product.category, acc);
   }
 
-  const totalBilled = invoices.reduce((s, i) => s + i.total, 0);
+  const totalBilled = invoices.reduce((s, i) => s + i.net, 0);
   const oosTotal = zoneShelf.filter((s) => s.outOfStock).length;
   const planogramFails = zoneShelf.filter((s) => !s.planogramOk).length;
   const priceFails = zoneShelf.filter((s) => !s.priceTagOk).length;

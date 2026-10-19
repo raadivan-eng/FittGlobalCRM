@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
   // `workerd` (motor wasm) y no con el binario nativo de Node.
   serverExternalPackages: ["@prisma/client", ".prisma/client"],
   experimental: {
-    serverActions: { bodySizeLimit: "4mb" },
+    serverActions: { bodySizeLimit: "10mb" },
   },
 };
 

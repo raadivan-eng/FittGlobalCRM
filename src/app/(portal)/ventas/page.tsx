@@ -33,15 +33,15 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
   const [mtd, cart, invoices12, companies, orderStats] = await Promise.all([
     billedBetween(monthStart, nextMonth),
     receivables(),
-    prisma.invoice.findMany({ where: { issueDate: { gte: range[0].start }, status: NOT_VOID }, select: { issueDate: true, total: true } }),
+    prisma.invoice.findMany({ where: { issueDate: { gte: range[0].start }, status: NOT_VOID }, select: { issueDate: true, net: true } }),
     prisma.company.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
-    prisma.salesOrder.aggregate({ where: { date: { gte: monthStart, lt: nextMonth }, status: NOT_VOID }, _count: true, _sum: { total: true } }),
+    prisma.salesOrder.aggregate({ where: { date: { gte: monthStart, lt: nextMonth }, status: NOT_VOID }, _count: true, _sum: { net: true } }),
   ]);
 
   const byPeriod = new Map<string, number>();
-  for (const i of invoices12) byPeriod.set(periodKey(i.issueDate), (byPeriod.get(periodKey(i.issueDate)) ?? 0) + i.total);
+  for (const i of invoices12) byPeriod.set(periodKey(i.issueDate), (byPeriod.get(periodKey(i.issueDate)) ?? 0) + i.net);
 
-  const avgTicket = orderStats._count ? (orderStats._sum.total ?? 0) / orderStats._count : 0;
+  const avgTicket = orderStats._count ? (orderStats._sum.net ?? 0) / orderStats._count : 0;
 
   const orderWhere = {
     ...(companyId ? { companyId } : {}),
@@ -151,7 +151,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                         <th>Entrega</th>
                         <th>Estado</th>
                         <th className="num">Descuento</th>
-                        <th className="num">Total</th>
+                        <th className="num">Sin IVA</th>
                         <th>Factura</th>
                       </tr>
                     </thead>
@@ -171,7 +171,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                           <td className="text-[var(--text-secondary)]">{o.store?.name ?? "Centralizada"}</td>
                           <td><EnumBadge option={ORDER_STATUS.get(o.status)} /></td>
                           <td className="num text-[var(--text-secondary)]">{o.discount > 0 ? fmtMoney(o.discount) : "—"}</td>
-                          <td className="num font-semibold">{fmtMoney(o.total)}</td>
+                          <td className="num font-semibold">{fmtMoney(o.net)}</td>
                           <td className="font-mono text-[11.5px] text-[var(--text-secondary)]">{o.invoice?.number ?? "—"}</td>
                         </tr>
                       ))}
@@ -186,7 +186,8 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                         <th>Vencimiento</th>
                         <th>Cliente</th>
                         <th>Estado</th>
-                        <th className="num">Total</th>
+                        <th className="num">Sin IVA</th>
+                        <th className="num">Con IVA</th>
                         <th className="num">Pagado</th>
                         <th className="num">Saldo</th>
                       </tr>
@@ -209,7 +210,8 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                               </Link>
                             </td>
                             <td><EnumBadge option={INVOICE_STATUS.get(i.status)} dot /></td>
-                            <td className="num">{fmtMoney(i.total)}</td>
+                            <td className="num">{fmtMoney(i.net)}</td>
+                            <td className="num text-[var(--text-secondary)]">{fmtMoney(i.total)}</td>
                             <td className="num text-[var(--text-secondary)]">{fmtMoney(i.paidAmount)}</td>
                             <td className="num font-semibold">{balance > 0 ? fmtMoney(balance) : "—"}</td>
                           </tr>

@@ -24,30 +24,45 @@ function catalog<T extends string>(options: readonly Option<T>[]) {
 }
 
 export const ROLES = catalog([
-  { value: "ADMIN", label: "Administrador", tone: "purple", hint: "Acceso total al portal" },
-  { value: "COMERCIAL", label: "Comercial", tone: "info", hint: "Decisiones de venta, forecast y clientes" },
-  { value: "SUPERVISOR", label: "Supervisor de campo", tone: "warning", hint: "Planifica rutas y valida novedades" },
+  { value: "ADMIN", label: "Superadmin", tone: "purple", hint: "Acceso total: usuarios, permisos y conexiones API" },
+  { value: "COMERCIAL", label: "Sales", tone: "info", hint: "Leads, clientes, ventas, forecast, reportes, trade y operación en calle" },
+  { value: "BASIC", label: "Basic", tone: "neutral", hint: "Consulta de clientes, tiendas, productos, inventario y ventas, sin editar" },
+  { value: "SUPERVISOR", label: "Supervisor de campo", tone: "warning", hint: "Planifica rutas, valida novedades y verifica el trade en tienda" },
   { value: "MERCADERISTA", label: "Mercaderista", tone: "success", hint: "Visita tiendas y reporta góndola" },
 ] as const);
 
+/**
+ * Tipo de cliente: qué clase de empresa nos compra. Define cómo se negocia con
+ * ella (quién decide, cómo paga, con qué volumen). Es independiente del canal.
+ */
 export const COMPANY_TYPES = catalog([
-  { value: "CADENA", label: "Cadena", tone: "info" },
-  { value: "MAYORISTA", label: "Mayorista", tone: "purple" },
-  { value: "INDEPENDIENTE", label: "Independiente", tone: "neutral" },
-  { value: "HORECA", label: "HORECA", tone: "warning" },
+  { value: "CADENA", label: "Cadena", tone: "info", hint: "Varios puntos de venta con una central de compras que negocia, codifica y paga por todos. Ej.: Éxito, Olímpica, Farmatodo." },
+  { value: "MAYORISTA", label: "Mayorista", tone: "purple", hint: "Compra para revender a otros comercios, no al consumidor final. Ej.: distribuidores y autoservicios mayoristas." },
+  { value: "INDEPENDIENTE", label: "Independiente", tone: "neutral", hint: "Uno o pocos puntos de venta donde el dueño decide y compra directo. Ej.: tienda de barrio, minimercado, tienda naturista." },
+  { value: "HORECA", label: "HORECA", tone: "warning", hint: "Hoteles, restaurantes y cafés: usan o sirven el producto en su negocio en lugar de exhibirlo para reventa." },
 ] as const);
 
+/**
+ * Canal: por dónde llega el producto al consumidor final. Define cómo se
+ * ejecuta en el punto de venta (góndola, mostrador, consumo en sitio o en línea).
+ */
 export const CHANNELS = catalog([
-  { value: "MODERNO", label: "Canal moderno", tone: "info" },
-  { value: "TRADICIONAL", label: "Canal tradicional", tone: "success" },
-  { value: "HORECA", label: "HORECA", tone: "warning" },
-  { value: "ECOMMERCE", label: "E-commerce", tone: "purple" },
+  { value: "MODERNO", label: "Canal moderno", tone: "info", hint: "Autoservicio organizado: supermercados, hipermercados y droguerías de cadena. Hay góndola, planograma y codificación." },
+  { value: "TRADICIONAL", label: "Canal tradicional", tone: "success", hint: "Venta tienda a tienda y por mostrador: tiendas de barrio, minimercados y los distribuidores que las surten." },
+  { value: "HORECA", label: "HORECA", tone: "warning", hint: "Consumo fuera del hogar: el producto se sirve o se usa en hoteles, restaurantes, cafés y catering." },
+  { value: "ECOMMERCE", label: "E-commerce", tone: "purple", hint: "Venta en línea: tienda web propia del cliente, marketplace o app de domicilios." },
 ] as const);
 
 export const TIERS = catalog([
   { value: "A", label: "Tier A", tone: "success", hint: "Top de facturación" },
   { value: "B", label: "Tier B", tone: "info" },
   { value: "C", label: "Tier C", tone: "neutral" },
+] as const);
+
+/** De dónde sale el forecast de un cliente; no se guarda, se deriva al leer. */
+export const FORECAST_SOURCE = catalog([
+  { value: "PROMEDIO", label: "Promedio", tone: "neutral", hint: "Media mensual facturada en el año vigente" },
+  { value: "MANUAL", label: "Manual", tone: "purple", hint: "Monto cargado por el comercial" },
 ] as const);
 
 export const STORE_FORMATS = catalog([
@@ -58,6 +73,7 @@ export const STORE_FORMATS = catalog([
   { value: "FARMACIA", label: "Farmacia", tone: "purple" },
   { value: "MAYORISTA", label: "Mayorista", tone: "warning" },
   { value: "ESPECIALIZADA", label: "Tienda especializada", tone: "success", hint: "Naturistas, tiendas fitness y canal tienda a tienda" },
+  { value: "ECOMMERCE", label: "E-commerce", tone: "purple", hint: "Tienda en línea, marketplace o venta por app" },
 ] as const);
 
 export const VISIT_STATUS = catalog([
@@ -119,6 +135,7 @@ export const CONNECTION_STATUS = catalog([
   { value: "PENDIENTE", label: "Sin verificar", tone: "warning", hint: "Hay credenciales guardadas que nadie ha probado todavía" },
   { value: "ERROR", label: "Con error", tone: "danger", hint: "El proveedor rechazó las credenciales en la última prueba" },
   { value: "SIN_CONFIGURAR", label: "Sin configurar", tone: "neutral", hint: "Todavía no se han cargado credenciales" },
+  { value: "INACTIVO", label: "Inactivo", tone: "neutral", hint: "Módulo apagado: el portal no lo usa" },
 ] as const);
 
 /** Estado de la geocodificación de una tienda. Sin coordenadas no entra a las rutas. */
@@ -128,6 +145,76 @@ export const GEO_STATUS = catalog([
   { value: "POR_REVISAR", label: "Por revisar", tone: "warning", hint: "Hay coordenadas, pero Google no está seguro: conviene confirmarlas" },
   { value: "NO_ENCONTRADA", label: "No encontrada", tone: "danger", hint: "Sin coordenadas: falta dirección o Google no la encontró en la ciudad" },
   { value: "PENDIENTE", label: "Pendiente", tone: "neutral", hint: "Todavía no se ha geocodificado" },
+  { value: "DIGITAL", label: "Digital", tone: "purple", hint: "Tienda en línea: no tiene ubicación física ni entra a rutas" },
+] as const);
+
+/** Tienda que el localizador encontró en Google Maps y no estaba en el maestro. */
+export const CANDIDATE_STATUS = catalog([
+  { value: "NUEVA", label: "Por revisar", tone: "warning", hint: "Está en Google Maps y no en el maestro" },
+  { value: "CREADA", label: "Creada", tone: "success", hint: "Se dio de alta como tienda nueva" },
+  { value: "VINCULADA", label: "Vinculada", tone: "info", hint: "Era una tienda que ya estaba en el maestro" },
+  { value: "DESCARTADA", label: "Descartada", tone: "neutral", hint: "No es punto de venta o no se atiende; no se vuelve a avisar" },
+] as const);
+
+/** Avisos de la bandeja del portal. */
+export const NOTIFICATION_TYPES = catalog([
+  { value: "TIENDA_ENCONTRADA", label: "Tienda encontrada", tone: "warning" },
+  { value: "TIENDA_CREADA", label: "Tienda creada", tone: "success" },
+  { value: "LEAD_NUEVO", label: "Lead nuevo", tone: "info" },
+  { value: "LEAD_MENSAJE", label: "Mensaje de lead", tone: "purple" },
+] as const);
+
+/** Por dónde llegó un lead: lo buscó el comercial o llegó solo por un medio. */
+export const LEAD_ENTRIES = catalog([
+  { value: "INBOUND", label: "Medios", tone: "info", hint: "Llegó por redes, la web, WhatsApp o contacto directo" },
+  { value: "SALES_HUNT", label: "Sales hunt", tone: "purple", hint: "Lo salió a buscar el área comercial, a partir de una tienda" },
+] as const);
+
+/** Medio de origen. Los de API entran solos; DIRECTO y SALES_HUNT los registra una persona. */
+export const LEAD_SOURCES = catalog([
+  { value: "FACEBOOK", label: "Facebook", tone: "info", hint: "Formulario de Lead Ads o anuncio que abre WhatsApp" },
+  { value: "INSTAGRAM", label: "Instagram", tone: "purple", hint: "Formulario de Lead Ads o anuncio que abre WhatsApp" },
+  { value: "WHATSAPP", label: "WhatsApp", tone: "success", hint: "Escribió a WhatsApp Business sin anuncio de por medio" },
+  { value: "WEB", label: "Sitio web", tone: "neutral", hint: "Formulario de contacto de la página" },
+  { value: "DIRECTO", label: "Directo", tone: "neutral", hint: "Llamada, correo o visita sin pasar por una plataforma" },
+  { value: "SALES_HUNT", label: "Sales hunt", tone: "warning", hint: "Tienda identificada por el área comercial" },
+] as const);
+
+/**
+ * Embudo del lead. El orden importa: es el que sigue el selector y el tablero.
+ * GANADO y PERDIDO lo cierran; un lead cerrado ya no suma al forecast.
+ */
+export const LEAD_STATUS = catalog([
+  { value: "NUEVO", label: "Nuevo", tone: "info", hint: "Nadie lo ha contactado todavía" },
+  { value: "CONTACTADO", label: "Contactado", tone: "neutral", hint: "Hubo primer contacto" },
+  { value: "CALIFICADO", label: "Calificado", tone: "purple", hint: "Tiene interés, volumen y quién decide" },
+  { value: "NEGOCIACION", label: "En negociación", tone: "warning", hint: "Hay propuesta o lista de precios sobre la mesa" },
+  { value: "GANADO", label: "Ganado", tone: "success", hint: "Se convirtió en cliente" },
+  { value: "PERDIDO", label: "Perdido", tone: "danger", hint: "No compró; queda el motivo" },
+] as const);
+
+export const LEAD_OPEN = ["NUEVO", "CONTACTADO", "CALIFICADO", "NEGOCIACION"] as const;
+
+/** Qué tan cerca está de comprar. Sólo los calientes suman al forecast. */
+export const LEAD_TEMPERATURE = catalog([
+  { value: "CALIENTE", label: "Caliente", tone: "danger", hint: "Cierre probable: con mes y valor suma al forecast" },
+  { value: "TIBIO", label: "Tibio", tone: "warning", hint: "Interesado, sin fecha de compra" },
+  { value: "FRIO", label: "Frío", tone: "info", hint: "Primer acercamiento o sin respuesta" },
+] as const);
+
+export const LEAD_EVENTS = catalog([
+  { value: "CREADO", label: "Creado", tone: "info" },
+  { value: "MENSAJE", label: "Mensaje", tone: "success" },
+  { value: "NOTA", label: "Nota", tone: "neutral" },
+  { value: "ESTADO", label: "Cambio", tone: "purple" },
+  { value: "CONVERTIDO", label: "Convertido", tone: "success" },
+] as const);
+
+/** Si el cliente ya existe como tercero en Siigo. Se deriva de `siigoId` y `siigoError`. */
+export const SIIGO_CUSTOMER = catalog([
+  { value: "EN_SIIGO", label: "En Siigo", tone: "success" },
+  { value: "SIN_ENVIAR", label: "Sin enviar", tone: "warning" },
+  { value: "RECHAZADO", label: "Rechazado por Siigo", tone: "danger" },
 ] as const);
 
 /** Resultado de cada entrada de la bitácora de una conexión. */
@@ -163,6 +250,50 @@ export const SHIPMENT_SOURCE = catalog([
   { value: "API", label: "API", tone: "info", hint: "Lo informó la transportadora por su API" },
   { value: "MANUAL", label: "Manual", tone: "neutral", hint: "Lo registró una persona en el portal" },
   { value: "SISTEMA", label: "Portal", tone: "neutral", hint: "Lo anotó el portal al crear o anular la guía" },
+] as const);
+
+/** Tipo de estrategia de trade o marketing que se pacta con un cliente. */
+export const TRADE_TYPES = catalog([
+  { value: "PROMOCION", label: "Promoción", tone: "info", hint: "Precio o mecánica especial: 2×1, descuento, pague N lleve M" },
+  { value: "ACTIVACION", label: "Activación", tone: "purple", hint: "Impulso, evento o presencia de marca en el punto de venta" },
+  { value: "EXHIBICION", label: "Exhibición adicional", tone: "success", hint: "Punta de góndola, isla, cabecera o espacio negociado" },
+  { value: "MATERIAL_POP", label: "Material POP", tone: "warning", hint: "Rompetráficos, stoppers, cenefas, habladores" },
+  { value: "DEGUSTACION", label: "Degustación", tone: "purple", hint: "Prueba de producto con impulsadora" },
+  { value: "CATALOGO", label: "Catálogo o encarte", tone: "info", hint: "Aparición en revista, folleto o vitrina digital de la cadena" },
+  { value: "OTRO", label: "Otra", tone: "neutral" },
+] as const);
+
+/**
+ * Ciclo de una actividad de trade. Mientras está APROBADA, las fechas dicen si
+ * va a empezar, está vigente o ya terminó (TRADE_PHASE); al cerrarla queda la
+ * evaluación.
+ */
+export const TRADE_STATUS = catalog([
+  { value: "PLANEADA", label: "Planeada", tone: "neutral", hint: "En negociación con el cliente; todavía no se ejecuta" },
+  { value: "APROBADA", label: "Aprobada", tone: "info", hint: "Pactada: se ejecuta en sus fechas y hay que comprobarla en tienda" },
+  { value: "CERRADA", label: "Cerrada", tone: "success", hint: "Terminó y quedó evaluada" },
+  { value: "CANCELADA", label: "Cancelada", tone: "danger", hint: "No se hizo" },
+] as const);
+
+/** Dónde está en el calendario una actividad aprobada. No se guarda: sale de las fechas. */
+export const TRADE_PHASE = catalog([
+  { value: "PROXIMA", label: "Por iniciar", tone: "neutral" },
+  { value: "VIGENTE", label: "Vigente", tone: "success" },
+  { value: "VENCIDA", label: "Terminó sin cerrar", tone: "warning", hint: "Pasó la fecha final: falta evaluarla y cerrarla" },
+] as const);
+
+/** Si la actividad se ve de verdad en la tienda. */
+export const TRADE_EXECUTION = catalog([
+  { value: "PENDIENTE", label: "Por verificar", tone: "neutral", hint: "Nadie la ha comprobado en la tienda" },
+  { value: "IMPLEMENTADA", label: "Implementada", tone: "success", hint: "Se ve completa en el punto de venta" },
+  { value: "PARCIAL", label: "Parcial", tone: "warning", hint: "Está, pero incompleta: falta material, precio o espacio" },
+  { value: "NO_IMPLEMENTADA", label: "No implementada", tone: "danger", hint: "La tienda no la tiene" },
+] as const);
+
+/** De dónde llegó un dato de sell-out. */
+export const SELLOUT_SOURCE = catalog([
+  { value: "ARCHIVO", label: "Archivo", tone: "neutral", hint: "Reporte del portal de la cadena cargado en Excel" },
+  { value: "API", label: "API", tone: "info", hint: "Leído directamente del portal de la cadena" },
 ] as const);
 
 /** Semáforo de vencimiento: la regla de negocio que ordena todo el módulo de inventario. */

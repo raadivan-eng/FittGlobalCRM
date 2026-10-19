@@ -182,3 +182,15 @@ export function StatusDot({ tone, label }: { tone: Tone; label: string }) {
     </span>
   );
 }
+
+/** Variación en línea para tablas: flecha + signo además del color; «—» sin base. */
+export function Delta({ value, invert = false }: { value: number | null; invert?: boolean }) {
+  if (value == null) return <span className="text-[var(--text-muted)]">—</span>;
+  const good = invert ? value <= 0 : value >= 0;
+  return (
+    <span className="inline-flex items-center gap-0.5 font-medium tabular" style={{ color: good ? "var(--good)" : "var(--critical)" }}>
+      {value >= 0 ? <IconArrowUp size={11} /> : <IconArrowDown size={11} />}
+      {fmtPct(value, 0)}
+    </span>
+  );
+}

@@ -7,7 +7,7 @@
  */
 
 export type CarrierKey = "SERVIENTREGA" | "COORDINADORA" | "INTERRAPIDISIMO" | "ENVIA" | "TCC" | "DEPRISA";
-export type ProviderKey = "SIIGO" | "META" | "GOOGLE" | "MAPS" | CarrierKey;
+export type ProviderKey = "SIIGO" | "CLAUDE" | "META" | "GOOGLE" | "MAPS" | CarrierKey;
 
 export type CredentialField = {
   /** `account` se guarda en claro (identifica la cuenta); el resto va cifrado. */
@@ -22,6 +22,24 @@ export type CredentialField = {
 
 /** Las credenciales ya descifradas, tal como las usa quien habla con el proveedor. */
 export type Credentials = { account: string; secret: string; extra: string };
+
+/**
+ * Un proveedor con varias APIs bajo las mismas credenciales (Siigo) las separa
+ * en módulos: comparten usuario y clave, pero cada uno se identifica ante el
+ * proveedor con su propio Partner-ID, se prende por separado y lleva su propio
+ * estado, porque falla y se sincroniza por su cuenta.
+ */
+export type ProviderModule = {
+  key: string;
+  name: string;
+  brings: string[];
+  /** Nombre con el que quedó registrada la aplicación en el proveedor; sirve de ejemplo. */
+  suggestedPartnerId: string;
+  /** Consulta mínima que confirma que el módulo puede leer lo suyo. */
+  probe: { path: string; noun: string };
+  /** Qué trae el botón «Sincronizar»; sin esto el módulo sólo se prueba. */
+  sync?: string;
+};
 
 export type CategoryKey = "FACTURACION" | "MARKETING" | "UBICACION" | "TRANSPORTE";
 
@@ -64,6 +82,8 @@ export type Provider = {
   endpoint?: string;
   docsUrl?: string;
   fields: CredentialField[];
+  /** Sólo para proveedores con varias APIs; ver ProviderModule. */
+  modules?: ProviderModule[];
 };
 
 /**
@@ -104,17 +124,57 @@ export const PROVIDERS: Provider[] = [
     category: "FACTURACION",
     name: "Siigo",
     tagline: "ERP contable y facturación electrónica",
-    brings: [
-      "Facturas de venta y notas emitidas desde el ERP",
-      "Estado de cartera y pagos aplicados por cliente",
-      "Catálogo de productos y precios de lista",
-    ],
+    // Lo que trae cada módulo va en el módulo.
+    brings: [],
     endpoint: "POST https://api.siigo.com/auth",
     docsUrl: "https://siigoapi.docs.apiary.io/",
     fields: [
       { name: "account", label: "Usuario API", hint: "Correo del usuario con perfil API en Siigo", secret: false },
       { name: "secret", label: "Access key", hint: "Clave que Siigo entrega al habilitar la API", secret: true },
-      { name: "extra", label: "Partner-Id", hint: "Identificador que Siigo asigna a la integración", secret: false },
+    ],
+    modules: [
+      {
+        key: "FACTURACION",
+        name: "Facturación",
+        brings: ["Facturas de venta y notas crédito emitidas en Siigo", "Estado de cartera y pagos aplicados por cliente"],
+        suggestedPartnerId: "CRMFittGlobalFacturacion",
+        probe: { path: "/v1/invoices", noun: "facturas" },
+        sync: "Trae las facturas desde enero de 2026 a Ventas y facturación. Cada noche entra lo nuevo.",
+      },
+      {
+        key: "CLIENTES",
+        name: "Clientes",
+        brings: [
+          "Terceros de Siigo para cruzarlos con los clientes del portal",
+          "Alta en Siigo del cliente que nace de un lead, con los datos de su RUT",
+        ],
+        suggestedPartnerId: "CRMFittGlobalClientes",
+        probe: { path: "/v1/customers", noun: "clientes" },
+      },
+      {
+        key: "INVENTARIOS",
+        name: "Inventarios",
+        brings: ["Catálogo de productos, precios de lista y existencias"],
+        suggestedPartnerId: "CRMFittGlobalInventarios",
+        probe: { path: "/v1/products", noun: "productos" },
+      },
+    ],
+  },
+  {
+    key: "CLAUDE",
+    kind: "SISTEMA",
+    category: "FACTURACION",
+    name: "Claude",
+    tagline: "Lectura del RUT al convertir leads en clientes",
+    brings: [
+      "Razón social, NIT, dirección y responsabilidades fiscales leídas del documento al convertir un lead",
+      "Funciona con el PDF de la DIAN o una foto legible; sin esta conexión no se pueden convertir leads",
+    ],
+    endpoint: "GET https://api.anthropic.com/v1/models",
+    docsUrl: "https://platform.claude.com/docs/en/build-with-claude/pdf-support",
+    fields: [
+      { name: "account", label: "Workspace", hint: "Nombre del workspace de la Consola de Claude donde se creó la clave, para reconocerla", secret: false },
+      { name: "secret", label: "API key", hint: "Clave de la API de Claude (sk-ant-…)", secret: true },
     ],
   },
   {
@@ -124,15 +184,27 @@ export const PROVIDERS: Provider[] = [
     name: "Meta",
     tagline: "Leads de campañas y WhatsApp Business",
     brings: [
-      "Leads de formularios de Facebook e Instagram",
-      "Desempeño de campañas por cuenta publicitaria",
-      "Conversaciones de WhatsApp Business del canal HORECA",
+      "Leads de formularios de Facebook e Instagram, directo a Leads",
+      "Quien escribe a WhatsApp Business entra como lead, con el anuncio de origen si lo hubo",
+      "Los mensajes siguientes quedan en la bitácora del lead",
     ],
     endpoint: "GET https://graph.facebook.com/v21.0/me",
-    docsUrl: "https://developers.facebook.com/docs/graph-api/",
+    docsUrl: "https://developers.facebook.com/docs/graph-api/webhooks/getting-started",
     fields: [
       { name: "account", label: "ID de la cuenta de negocio", hint: "Business ID en el Administrador Comercial", secret: false },
-      { name: "secret", label: "Token de acceso", hint: "Token de larga duración de la app del sistema", secret: true },
+      {
+        name: "secret",
+        label: "Token de acceso",
+        hint: "Token de larga duración de un usuario del sistema con leads_retrieval, pages_manage_metadata y whatsapp_business_messaging",
+        secret: true,
+      },
+      {
+        name: "extra",
+        label: "Clave secreta de la app",
+        hint: "App Secret de la app de Meta. Sin ella el portal rechaza el webhook, porque no puede comprobar que lo envía Meta",
+        secret: true,
+        optional: true,
+      },
     ],
   },
   {
@@ -187,6 +259,8 @@ export const CARRIERS = PROVIDERS.filter((p) => p.kind === "TRANSPORTE");
 export const isCarrier = (key: string): key is CarrierKey => CARRIERS.some((c) => c.key === key);
 
 export const providerByKey = (key: string) => PROVIDERS.find((p) => p.key === key);
+
+export const moduleByKey = (provider: Provider, key: string) => provider.modules?.find((m) => m.key === key);
 
 /** Deja ver los últimos caracteres para reconocer la credencial sin exponerla. */
 export const secretHint = (value: string) => value.trim().slice(-4);

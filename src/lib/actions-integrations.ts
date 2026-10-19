@@ -4,18 +4,29 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "./prisma";
 import { requireRole } from "./auth";
 import { decryptJson, encryptJson } from "./secrets";
-import { isCarrier, providerByKey, secretHint, type Credentials, type ProviderKey } from "./integrations";
-import { asText, mensajeDeError, pedir } from "./http";
+import {
+  isCarrier,
+  moduleByKey,
+  providerByKey,
+  secretHint,
+  type Credentials,
+  type Provider,
+  type ProviderKey,
+} from "./integrations";
+import { asRecord, asText, mensajeDeError, pedir } from "./http";
 import { carrierAdapter } from "./carriers";
+import { siigoAuth, siigoGet } from "./siigo";
+import { siigoSyncBatch, type SiigoSyncBatch } from "./siigo-sync";
+import { GRAPH_VERSION } from "./meta";
+import Anthropic from "@anthropic-ai/sdk";
+import { CLAUDE_MODEL } from "./lector-documentos";
 
-/** Versión fijada de la Graph API: subirla es cambiar esta línea. */
-const GRAPH_VERSION = "v21.0";
 
 export type ConnectionState = { error?: string; ok?: string };
 
 /**
- * Prueba real contra el proveedor: pide un token (Siigo, Google) o consulta la
- * cuenta del token (Meta). Devuelve la descripción de lo que respondió; si algo
+ * Prueba real contra el proveedor: pide un token (Google) o consulta la cuenta
+ * del token (Meta). Siigo, que tiene módulos, se prueba en probarSiigo. Devuelve la descripción de lo que respondió; si algo
  * falla, lanza con el mensaje tal cual lo dio el proveedor.
  */
 async function saludar(provider: ProviderKey, c: Credentials): Promise<string> {
@@ -23,17 +34,6 @@ async function saludar(provider: ProviderKey, c: Credentials): Promise<string> {
     const adapter = carrierAdapter(provider);
     if (!adapter) throw new Error("La integración con esta transportadora todavía no está habilitada en el portal.");
     return adapter.autenticar(c);
-  }
-
-  if (provider === "SIIGO") {
-    const { res, body, text } = await pedir("https://api.siigo.com/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Partner-Id": c.extra },
-      body: JSON.stringify({ username: c.account, access_key: c.secret }),
-    });
-    if (!res.ok) throw new Error(`${res.status} · ${mensajeDeError(body, text)}`);
-    const horas = Math.round(Number(body.expires_in ?? 0) / 3600);
-    return `Autenticado como ${c.account}${horas ? ` · token vigente ${horas} h` : ""}`;
   }
 
   if (provider === "META") {
@@ -44,6 +44,17 @@ async function saludar(provider: ProviderKey, c: Credentials): Promise<string> {
     const nombre = asText(body.name) || "la cuenta";
     const id = asText(body.id);
     return `Token válido para ${nombre}${id ? ` (id ${id})` : ""}`;
+  }
+
+  if (provider === "CLAUDE") {
+    // Consulta el modelo con el que se leen los documentos: no consume tokens.
+    try {
+      const model = await new Anthropic({ apiKey: c.secret, timeout: 12_000, maxRetries: 0 }).models.retrieve(CLAUDE_MODEL);
+      return `Clave válida · ${model.display_name} disponible para leer el RUT`;
+    } catch (e) {
+      if (e instanceof Anthropic.APIError) throw new Error(`${e.status ?? "Sin respuesta"} · ${e.message}`);
+      throw e;
+    }
   }
 
   if (provider === "MAPS") {
@@ -125,7 +136,17 @@ export async function guardarConexion(_prev: ConnectionState, formData: FormData
     else if (!field.optional) faltantes.push(field.label);
   }
 
+  const modulos = (descriptor.modules ?? []).map((m) => ({
+    module: m.key,
+    partnerId: String(formData.get(`partnerId:${m.key}`) ?? "").trim() || null,
+    enabled: formData.get(`enabled:${m.key}`) === "on",
+  }));
+  for (const m of modulos) {
+    if (m.enabled && !m.partnerId) faltantes.push(`Partner-ID de ${moduleByKey(descriptor, m.module)!.name}`);
+  }
+
   if (faltantes.length) return { error: `Falta completar: ${faltantes.join(", ")}.` };
+  if (modulos.length && !modulos.some((m) => m.enabled)) return { error: "Activa al menos un módulo." };
 
   const data = {
     account,
@@ -143,7 +164,29 @@ export async function guardarConexion(_prev: ConnectionState, formData: FormData
     update: data,
   });
 
-  await registrar(row.id, "Credenciales actualizadas", "INFO", `Cuenta ${account}`, user.id);
+  for (const m of modulos) {
+    const estado = {
+      partnerId: m.partnerId,
+      enabled: m.enabled,
+      status: m.partnerId ? "PENDIENTE" : "SIN_CONFIGURAR",
+      lastDetail: null,
+      lastError: null,
+    };
+    await prisma.apiConnectionModule.upsert({
+      where: { connectionId_module: { connectionId: row.id, module: m.module } },
+      create: { connectionId: row.id, module: m.module, ...estado },
+      update: estado,
+    });
+  }
+
+  const activos = modulos.filter((m) => m.enabled).map((m) => moduleByKey(descriptor, m.module)!.name);
+  await registrar(
+    row.id,
+    "Credenciales actualizadas",
+    "INFO",
+    `Cuenta ${account}${activos.length ? ` · módulos: ${activos.join(", ")}` : ""}`,
+    user.id,
+  );
   revalidatePath("/conexiones");
   return {
     ok:
@@ -173,6 +216,12 @@ export async function probarConexion(formData: FormData) {
     extra: secretos.extra ?? "",
   };
 
+  if (descriptor.modules) {
+    await probarSiigo(descriptor, row.id, creds, null, user.id);
+    revalidatePath("/conexiones");
+    return;
+  }
+
   const inicio = Date.now();
   try {
     const detalle = await saludar(descriptor.key, creds);
@@ -195,6 +244,147 @@ export async function probarConexion(formData: FormData) {
   revalidatePath("/guias");
 }
 
+/**
+ * Prueba un solo módulo: pide el token con su Partner-ID y hace su consulta
+ * mínima. Sirve para revisar un módulo sin volver a probar los demás.
+ */
+export async function probarModulo(formData: FormData) {
+  const user = await requireRole(["ADMIN"]);
+  const descriptor = providerByKey(String(formData.get("provider") ?? ""));
+  const module = String(formData.get("module") ?? "");
+  if (!descriptor || !moduleByKey(descriptor, module)) return;
+
+  const row = await prisma.apiConnection.findUnique({ where: { provider: descriptor.key } });
+  const secretos = decryptJson(row?.secretCipher);
+  if (!row || !secretos) return;
+
+  const creds: Credentials = { account: row.account ?? "", secret: secretos.secret ?? "", extra: secretos.extra ?? "" };
+  await probarSiigo(descriptor, row.id, creds, module, user.id);
+  revalidatePath("/conexiones");
+}
+
+/**
+ * Siigo da un solo token por cuenta; cada módulo se presenta con su Partner-ID
+ * y hace una consulta mínima a lo suyo. La conexión queda conectada sólo si
+ * todos los módulos activos responden; si falla uno, los demás siguen sirviendo
+ * y el error queda en el módulo.
+ */
+async function probarSiigo(
+  descriptor: Provider,
+  connectionId: string,
+  creds: Credentials,
+  soloModulo: string | null,
+  userId: string,
+) {
+  let filas = await prisma.apiConnectionModule.findMany({ where: { connectionId } });
+
+  // Antes de los módulos, el Partner-ID se guardaba cifrado junto a la clave:
+  // si quedó así, pasa a ser el de Facturación.
+  if (!filas.length && creds.extra) {
+    await prisma.apiConnectionModule.create({
+      data: { connectionId, module: "FACTURACION", partnerId: creds.extra, status: "PENDIENTE" },
+    });
+    filas = await prisma.apiConnectionModule.findMany({ where: { connectionId } });
+  }
+
+  const aProbar = filas.filter((f) => f.enabled && f.partnerId && (!soloModulo || f.module === soloModulo));
+  const accion = soloModulo ? "Prueba de módulo" : "Prueba de conexión";
+  const nombre = (key: string) => moduleByKey(descriptor, key)?.name ?? key;
+
+  if (!aProbar.length) {
+    const mensaje = "No hay módulos activos con Partner-ID: edita la conexión y configura al menos uno.";
+    await prisma.apiConnection.update({
+      where: { id: connectionId },
+      data: { status: "ERROR", lastCheckAt: new Date(), lastError: mensaje },
+    });
+    await registrar(connectionId, accion, "FALLO", mensaje, userId);
+    return;
+  }
+
+  const inicio = Date.now();
+  let token: string;
+  let autenticado: string;
+  try {
+    const auth = await siigoAuth(creds.account, creds.secret, aProbar[0].partnerId!);
+    token = auth.token;
+    const horas = Math.round(auth.expiresInSeconds / 3600);
+    autenticado = `Autenticado como ${creds.account}${horas ? ` · token vigente ${horas} h` : ""}`;
+  } catch (e) {
+    const mensaje = e instanceof Error ? e.message : "Fallo desconocido";
+    const ahora = new Date();
+    await prisma.apiConnection.update({
+      where: { id: connectionId },
+      data: { status: "ERROR", lastCheckAt: ahora, lastError: mensaje },
+    });
+    await prisma.apiConnectionModule.updateMany({
+      where: { id: { in: aProbar.map((f) => f.id) } },
+      data: { status: "ERROR", lastCheckAt: ahora, lastError: `No se pudo autenticar: ${mensaje}` },
+    });
+    await registrar(connectionId, accion, "FALLO", `Autenticación · ${mensaje}`, userId, Date.now() - inicio);
+    return;
+  }
+
+  const resultados: string[] = [];
+  let fallidos = 0;
+  for (const fila of aProbar) {
+    const def = moduleByKey(descriptor, fila.module);
+    if (!def) continue;
+    try {
+      const body = await siigoGet(token, fila.partnerId!, def.probe.path, { page: "1", page_size: "1" });
+      const total = asText(asRecord(body.pagination).total_results);
+      const detalle = total ? `Responde · ${total} ${def.probe.noun} en Siigo` : "Responde";
+      await prisma.apiConnectionModule.update({
+        where: { id: fila.id },
+        data: { status: "CONECTADA", lastCheckAt: new Date(), lastDetail: detalle, lastError: null },
+      });
+      resultados.push(`${def.name}: ok`);
+    } catch (e) {
+      const mensaje = e instanceof Error ? e.message : "Fallo desconocido";
+      await prisma.apiConnectionModule.update({
+        where: { id: fila.id },
+        data: { status: "ERROR", lastCheckAt: new Date(), lastError: mensaje },
+      });
+      resultados.push(`${def.name}: ${mensaje}`);
+      fallidos++;
+    }
+  }
+
+  // El estado de la conexión resume el de todos los módulos activos, no sólo los recién probados.
+  const activos = (await prisma.apiConnectionModule.findMany({ where: { connectionId } })).filter((f) => f.enabled);
+  const fallan = activos.filter((f) => f.status === "ERROR");
+  const status = fallan.length ? "ERROR" : activos.every((f) => f.status === "CONECTADA") ? "CONECTADA" : "PENDIENTE";
+  await prisma.apiConnection.update({
+    where: { id: connectionId },
+    data: {
+      status,
+      lastCheckAt: new Date(),
+      lastDetail: autenticado,
+      lastError: fallan.length ? `Credenciales válidas, pero falla: ${fallan.map((f) => nombre(f.module)).join(", ")}` : null,
+    },
+  });
+  await registrar(
+    connectionId,
+    accion,
+    fallidos ? "FALLO" : "OK",
+    resultados.join(" · "),
+    userId,
+    Date.now() - inicio,
+  );
+}
+
+/**
+ * Un lote de la sincronización de facturas de Siigo. El botón la llama en
+ * bucle hasta que `done`: cada llamada es una invocación con sus propios
+ * límites, y si se corta, la siguiente sigue donde iba. A mano siempre se
+ * repasa todo 2026, para refrescar saldos y vencimientos.
+ */
+export async function sincronizarSiigo(): Promise<SiigoSyncBatch> {
+  const user = await requireRole(["ADMIN"]);
+  const batch = await siigoSyncBatch({ userId: user.id, modo: "COMPLETA" });
+  if (batch.done) revalidatePath("/", "layout");
+  return batch;
+}
+
 /** Borra las credenciales guardadas y deja la conexión sin configurar. */
 export async function desconectarConexion(formData: FormData) {
   const user = await requireRole(["ADMIN"]);
@@ -215,6 +405,11 @@ export async function desconectarConexion(formData: FormData) {
       lastError: null,
       lastCheckAt: null,
     },
+  });
+  // Los Partner-ID no son secretos: se conservan para reconectar, sin estado.
+  await prisma.apiConnectionModule.updateMany({
+    where: { connectionId: row.id },
+    data: { status: "SIN_CONFIGURAR", lastDetail: null, lastError: null, lastCheckAt: null },
   });
   await registrar(row.id, "Conexión desconectada", "INFO", "Se borraron las credenciales guardadas", user.id);
   revalidatePath("/conexiones");

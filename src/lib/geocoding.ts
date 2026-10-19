@@ -67,7 +67,7 @@ const BRANDS: [RegExp, string][] = [
   [/PRICESMART/, "PriceSmart"],
 ];
 
-function brandOf(companyName: string) {
+export function brandOf(companyName: string) {
   const key = norm(companyName);
   return BRANDS.find(([re]) => re.test(key))?.[1] ?? null;
 }
@@ -83,10 +83,10 @@ export function cleanStoreName(name: string, brand: string | null) {
   return n.replace(/\s+/g, " ").trim();
 }
 
-const cityKey = (city: string) => norm(city).replace(/\bD\.?C\.?$/, "").replace(/,/g, "").trim();
+export const cityKey = (city: string) => norm(city).replace(/\bD\.?C\.?$/, "").replace(/,/g, "").trim();
 
 /** ¿El texto devuelto por Google menciona la ciudad de la tienda? */
-function inCity(texts: string[], city: string) {
+export function inCity(texts: string[], city: string) {
   const want = cityKey(city);
   if (!want || want === "SIN CIUDAD") return true;
   return texts.some((t) => {
@@ -99,7 +99,7 @@ function inCity(texts: string[], city: string) {
 
 type Json = Record<string, unknown>;
 
-async function call(url: string, init: RequestInit = {}) {
+export async function mapsFetch(url: string, init: RequestInit = {}) {
   try {
     const res = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) });
     const body = (await res.json().catch(() => ({}))) as Json;
@@ -114,7 +114,7 @@ async function geocodeAddress(store: StoreToLocate, key: string): Promise<GeoRes
   const query = [cleanAddress(store.address), store.city !== "Sin ciudad" ? store.city : null, store.department, "Colombia"]
     .filter(Boolean)
     .join(", ");
-  const { body } = await call(
+  const { body } = await mapsFetch(
     `https://maps.googleapis.com/maps/api/geocode/json?${new URLSearchParams({ address: query, components: "country:CO", region: "co", language: "es", key })}`,
   );
 
@@ -148,7 +148,7 @@ async function searchPlace(store: StoreToLocate, key: string): Promise<GeoResult
   const name = cleanStoreName(store.name, brand);
   const textQuery = [brand, name, store.city !== "Sin ciudad" ? store.city : null].filter(Boolean).join(" ");
 
-  const { res, body } = await call("https://places.googleapis.com/v1/places:searchText", {
+  const { res, body } = await mapsFetch("https://places.googleapis.com/v1/places:searchText", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -302,4 +302,69 @@ export function parseCoordinates(text: string): { lat: number; lng: number } | n
     return null;
   }
   return null;
+}
+
+/**
+ * Los enlaces cortos que comparte la app de Maps («maps.app.goo.gl/…») no traen
+ * las coordenadas: hay que seguir la redirección hasta el enlace largo. Sólo se
+ * siguen dominios de Google, nunca una URL cualquiera.
+ */
+export async function resolveMapsLink(text: string): Promise<string> {
+  let url = text.trim();
+  for (let salto = 0; salto < 3; salto++) {
+    if (!/^https?:\/\/(maps\.app\.goo\.gl|goo\.gl\/maps)\//i.test(url)) break;
+    try {
+      const res = await fetch(url, { redirect: "manual", cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const next = res.headers.get("location");
+      if (!next) break;
+      url = next;
+    } catch {
+      break;
+    }
+  }
+  return url;
+}
+
+export type ReversePlace = { city: string | null; address: string | null };
+
+/** «Bogotá ciudad» o «Perímetro Urbano Medellín» (OpenStreetMap) → el nombre de siempre. */
+const cleanCity = (city: string) => city.replace(/^Per[ií]metro Urbano\s+/i, "").replace(/\s+ciudad$/i, "").trim();
+
+/**
+ * Ciudad y dirección de un punto. Con Google Maps conectado se usa su
+ * Geocoding API; si no, OpenStreetMap, que no pide clave. Nunca falla: si no
+ * hay respuesta, los campos quedan para llenarse a mano.
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<ReversePlace> {
+  const empty = { city: null, address: null };
+  try {
+    const key = await mapsKey();
+    if (key) {
+      const { body } = await mapsFetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?${new URLSearchParams({ latlng: `${lat},${lng}`, language: "es", key })}`,
+      );
+      if (body.status === "OK") {
+        const results = body.results as { types: string[]; formatted_address: string; address_components: { long_name: string; types: string[] }[] }[];
+        const all = results.flatMap((r) => r.address_components);
+        const city =
+          all.find((c) => c.types.includes("locality"))?.long_name ??
+          all.find((c) => c.types.includes("administrative_area_level_2"))?.long_name ??
+          null;
+        const street = results.find((r) => r.types.some((t) => ["street_address", "premise", "route"].includes(t)));
+        return { city: city ? cleanCity(city) : null, address: street?.formatted_address.split(",")[0].trim() ?? null };
+      }
+    }
+
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?${new URLSearchParams({ lat: String(lat), lon: String(lng), format: "jsonv2", zoom: "18", "accept-language": "es" })}`,
+      { headers: { "User-Agent": "FittGlobalCRM/1.0 (crm.fittglobal.com)" }, cache: "no-store", signal: AbortSignal.timeout(TIMEOUT_MS) },
+    );
+    if (!res.ok) return empty;
+    const a = ((await res.json()) as { address?: Record<string, string> }).address ?? {};
+    const city = a.city ?? a.town ?? a.village ?? a.municipality ?? a.county ?? null;
+    const address = a.road ? [a.road, a.house_number && `# ${a.house_number}`].filter(Boolean).join(" ") : null;
+    return { city: city ? cleanCity(city) : null, address };
+  } catch {
+    return empty;
+  }
 }

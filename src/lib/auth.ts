@@ -88,13 +88,27 @@ export async function clearSessionCookie() {
 
 /** Qué secciones ve cada rol. Se usa tanto en el menú como en los guards de página. */
 export const ACCESS: Record<string, string[]> = {
-  ADMIN: ["dashboard", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ventas", "forecast", "reportes", "conexiones"],
-  COMERCIAL: ["dashboard", "clientes", "contactos", "tiendas", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ventas", "forecast", "reportes"],
-  SUPERVISOR: ["dashboard", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "guias", "productos", "inventario"],
+  ADMIN: ["dashboard", "avisos", "leads", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ventas", "forecast", "reportes", "sellout", "trade", "conexiones", "usuarios"],
+  COMERCIAL: ["dashboard", "avisos", "leads", "clientes", "contactos", "tiendas", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ventas", "forecast", "reportes", "sellout", "trade"],
+  // Sólo secciones sin acciones abiertas a este perfil: las mutaciones de ventas
+  // y forecast exigen ADMIN o COMERCIAL, así que aquí todo es de consulta.
+  BASIC: ["dashboard", "clientes", "contactos", "tiendas", "productos", "inventario", "ventas"],
+  SUPERVISOR: ["dashboard", "avisos", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "sellout", "trade"],
   MERCADERISTA: ["dashboard", "tiendas", "rutas", "visitas", "novedades", "productos"],
 };
 
 export const can = (role: string, section: string) => (ACCESS[role] ?? []).includes(section);
+
+/** Quiénes cargan sell-out y crean o aprueban actividades de trade. */
+export const TRADE_ROLES = ["ADMIN", "COMERCIAL"];
+/** Quiénes marcan en tienda si una actividad quedó implementada. */
+export const TRADE_CHECK_ROLES = ["ADMIN", "COMERCIAL", "SUPERVISOR"];
+
+/** Quiénes crean, corrigen y vinculan contactos de clientes y tiendas; los demás sólo los consultan. */
+export const CONTACT_ROLES = ["ADMIN", "COMERCIAL", "SUPERVISOR"];
+
+/** Quiénes corrigen la ficha de un cliente (clasificación, datos comerciales y crédito). */
+export const CLIENT_ROLES = ["ADMIN", "COMERCIAL"];
 
 /**
  * Guard de página. ACCESS es la única fuente de verdad: gobierna a la vez el

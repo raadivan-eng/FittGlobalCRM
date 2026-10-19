@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
-  billedBetween, coverage, expiryReport, fieldKpis, forecastVsBilling,
-  NOT_VOID, periodKey, receivables, startOfMonth, topCompanies, topProducts, topStores,
+  billedBetween, companyForecasts, coverage, expiryReport, fieldKpis, forecastVsBilling, leadForecasts,
+  NOT_VOID, periodKey, receivables, startOfMonth, sumForecasts, topCompanies, topProducts, topStores,
 } from "@/lib/analytics";
 import { EXPIRY_BANDS, INCIDENT_TYPES, SEVERITIES, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtMoney, fmtNumber, fmtPeriod } from "@/lib/format";
@@ -31,16 +31,14 @@ export async function DashboardComercial({ userName }: { userName: string }) {
   const quarterStart = startOfMonth(-2, now);
 
   const [
-    mtd, prevMtd, series, forecastMonth, expiry, cover, field, cart,
+    mtd, prevMtd, series, forecastMonth, leadsMonth, expiry, cover, field, cart,
     products, companies, stores, criticalIncidents, activeCounts,
   ] = await Promise.all([
     billedBetween(monthStart, nextMonth),
     billedBetween(prevMonth, prevSameSpan),
     forecastVsBilling(12),
-    prisma.forecast.aggregate({
-      where: { period: periodKey(monthStart), companyId: { not: null } },
-      _sum: { amount: true },
-    }),
+    companyForecasts([periodKey(monthStart)]),
+    leadForecasts([periodKey(monthStart)]),
     expiryReport(),
     coverage(monthStart, nextMonth),
     fieldKpis(monthStart, nextMonth),
@@ -65,7 +63,8 @@ export async function DashboardComercial({ userName }: { userName: string }) {
     ]),
   ]);
 
-  const forecastTarget = forecastMonth._sum.amount ?? 0;
+  const leadsTarget = leadsMonth.get(periodKey(monthStart))?.total ?? 0;
+  const forecastTarget = sumForecasts(forecastMonth.get(periodKey(monthStart))) + leadsTarget;
   const delta = prevMtd.total > 0 ? ((mtd.total - prevMtd.total) / prevMtd.total) * 100 : null;
   const [companyCount, storeCount, orderCount] = activeCounts;
 
@@ -88,7 +87,7 @@ export async function DashboardComercial({ userName }: { userName: string }) {
           <StatTile
             label="Avance del forecast"
             value={`${forecastTarget ? ((mtd.total / forecastTarget) * 100).toFixed(0) : "0"}%`}
-            hint={`Meta ${fmtCompact(forecastTarget)} · ${fmtPeriod(periodKey(monthStart))}`}
+            hint={`Meta ${fmtCompact(forecastTarget)}${leadsTarget ? ` (${fmtCompact(leadsTarget)} en leads)` : ""} · ${fmtPeriod(periodKey(monthStart))}`}
             icon={<IconTarget size={15} />}
             href="/forecast"
           />

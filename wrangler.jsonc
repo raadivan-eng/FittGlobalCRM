@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "fitt-global-crm",
-  "main": ".open-next/worker.js",
+  "main": "worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
@@ -16,14 +16,15 @@
     {
       "binding": "DB",
       "database_name": "fitt-crm",
-      // Se completa con el id que imprime `wrangler d1 create fitt-crm`.
-      "database_id": "PENDIENTE",
+      "database_id": "794d7b0c-05de-48d5-875d-8e1721b367c2",
       "migrations_dir": "migrations"
     }
   ],
-  // El dominio sólo funciona cuando fittglobal.com ya resuelve con los
-  // nameservers de Cloudflare.
+  // El dominio sólo funciona porque fittglobal.com resuelve con los
+  // nameservers de Cloudflare; el registro de crm lo crea el propio deploy.
   "routes": [{ "pattern": "crm.fittglobal.com", "custom_domain": true }],
   "workers_dev": true,
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Localizador de tiendas a las 06:00 y facturas de Siigo a las 02:00 en Bogotá (UTC-5). Ver worker.ts.
+  "triggers": { "crons": ["0 11 * * *", "0 7 * * *"] }
 }
