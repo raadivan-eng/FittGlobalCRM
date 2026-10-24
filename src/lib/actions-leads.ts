@@ -9,7 +9,7 @@ import { fmtMoney, fmtPeriod } from "./format";
 import { parseCoordinates, resolveMapsLink, reverseGeocode } from "./geocoding";
 import { createLeadWithCode, LEAD_ROLES, metaCredentials, normalizePhone, searchPlaces, type PlaceOption } from "./leads";
 import { syncLeadForms } from "./meta";
-import { claudeApiKey, isReadableType, MAX_DOCUMENT_BYTES, readTaxDocument } from "./lector-documentos";
+import { readUploadedDocument } from "./lector-documentos";
 import { pushCustomerToSiigo } from "./siigo-clientes";
 import { formatTaxId, parseTaxData, type TaxReading } from "./rut";
 import { seal, sealMatches } from "./secrets";
@@ -386,30 +386,7 @@ const nitBase = (v: string | null | undefined) => (v ?? "").split("-")[0].replac
  */
 export async function leerDocumento(fd: FormData): Promise<TaxReading> {
   const user = await requireRole(LEAD_ROLES);
-  const file = fd.get("document");
-  if (!(file instanceof File) || !file.size) return { error: "Elige el archivo del RUT." };
-  if (file.size > MAX_DOCUMENT_BYTES) return { error: "El archivo pesa más de 8 MB; sube el PDF original o una foto más liviana." };
-  if (!isReadableType(file.type)) return { error: "Sube un PDF o una foto (JPG, PNG o WebP)." };
-
-  const apiKey = await claudeApiKey();
-  if (!apiKey) return { error: "La lectura de documentos no está conectada: carga la API key de Claude en Conexiones API." };
-
-  const inicio = Date.now();
-  const lectura = await readTaxDocument(apiKey, await file.arrayBuffer(), file.type);
-  const conexion = await prisma.apiConnection.findUnique({ where: { provider: "CLAUDE" }, select: { id: true } });
-  if (conexion) {
-    const d = lectura.data;
-    await prisma.apiConnectionEvent.create({
-      data: {
-        connectionId: conexion.id,
-        action: "Lectura de documento",
-        result: d ? "OK" : "FALLO",
-        detail: d ? `${d.documentType === "RUT" ? "RUT" : "Cámara de Comercio"} de ${d.legalName} · ${d.idType} ${formatTaxId(d)}` : lectura.error ?? null,
-        userId: user.id,
-        durationMs: Date.now() - inicio,
-      },
-    });
-  }
+  const lectura = await readUploadedDocument(fd.get("document"), user.id, "Elige el archivo del RUT.");
   if (!lectura.data) return lectura;
   if (lectura.data.documentType !== "RUT") {
     return { error: "Ese documento no es un RUT. Para convertir el lead en cliente hace falta su RUT de la DIAN." };

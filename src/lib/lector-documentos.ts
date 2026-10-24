@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { prisma } from "./prisma";
 import { decryptJson } from "./secrets";
-import { TaxDataSchema, taxWarnings, type TaxReading } from "./rut";
+import { formatTaxId, TaxDataSchema, taxWarnings, type TaxReading } from "./rut";
 
 /**
  * Lectura del RUT o del certificado de Cámara de Comercio con Claude.
@@ -22,7 +22,7 @@ export const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 type ImageType = (typeof IMAGE_TYPES)[number];
 
-const SYSTEM = `Lees documentos tributarios colombianos para dar de alta clientes en un ERP.
+const SYSTEM = `Lees documentos tributarios colombianos para dar de alta clientes y proveedores en un ERP.
 
 Recibes uno de dos documentos:
 - El RUT (formulario 001 de la DIAN). Los datos están en casillas numeradas: 5 NIT, 6 DV, 24 tipo de contribuyente, 25 tipo de documento, 31 a 34 apellidos y nombres, 35 razón social, 36 nombre comercial, 39 departamento (código de dos dígitos), 40 municipio (código de tres dígitos), 41 dirección, 42 correo, 44 teléfono 1, 46 actividad principal y 53 responsabilidades (códigos de dos dígitos).
@@ -36,7 +36,7 @@ export async function claudeApiKey() {
   return decryptJson(row?.secretCipher)?.secret || null;
 }
 
-function documentBlock(base64: string, mediaType: string): Anthropic.Beta.BetaContentBlockParam {
+export function documentBlock(base64: string, mediaType: string): Anthropic.Beta.BetaContentBlockParam {
   if (mediaType === "application/pdf") {
     return { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } };
   }
@@ -83,4 +83,36 @@ export async function readTaxDocument(apiKey: string, bytes: ArrayBuffer, mediaT
     if (e instanceof Anthropic.APIError) return { error: `Claude respondió ${e.status ?? "con error"}: ${e.message}` };
     return { error: `No se pudo leer el documento: ${e instanceof Error ? e.message : "fallo desconocido"}` };
   }
+}
+
+/**
+ * Lectura desde un formulario: valida el archivo, lo lee y deja la lectura en
+ * la bitácora de la conexión con Claude. No guarda nada más; quien la pide
+ * decide qué documento esperaba y sella lo leído.
+ */
+export async function readUploadedDocument(file: FormDataEntryValue | null, userId: string, missing: string): Promise<TaxReading> {
+  if (!(file instanceof File) || !file.size) return { error: missing };
+  if (file.size > MAX_DOCUMENT_BYTES) return { error: "El archivo pesa más de 8 MB; sube el PDF original o una foto más liviana." };
+  if (!isReadableType(file.type)) return { error: "Sube un PDF o una foto (JPG, PNG o WebP)." };
+
+  const apiKey = await claudeApiKey();
+  if (!apiKey) return { error: "La lectura de documentos no está conectada: carga la API key de Claude en Conexiones API." };
+
+  const inicio = Date.now();
+  const lectura = await readTaxDocument(apiKey, await file.arrayBuffer(), file.type);
+  const conexion = await prisma.apiConnection.findUnique({ where: { provider: "CLAUDE" }, select: { id: true } });
+  if (conexion) {
+    const d = lectura.data;
+    await prisma.apiConnectionEvent.create({
+      data: {
+        connectionId: conexion.id,
+        action: "Lectura de documento",
+        result: d ? "OK" : "FALLO",
+        detail: d ? `${d.documentType === "RUT" ? "RUT" : "Cámara de Comercio"} de ${d.legalName} · ${d.idType} ${formatTaxId(d)}` : lectura.error ?? null,
+        userId,
+        durationMs: Date.now() - inicio,
+      },
+    });
+  }
+  return lectura;
 }

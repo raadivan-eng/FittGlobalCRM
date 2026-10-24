@@ -210,11 +210,66 @@ export const LEAD_EVENTS = catalog([
   { value: "CONVERTIDO", label: "Convertido", tone: "success" },
 ] as const);
 
-/** Si el cliente ya existe como tercero en Siigo. Se deriva de `siigoId` y `siigoError`. */
+/** Si el cliente o el proveedor ya existe como tercero en Siigo. Se deriva de `siigoId` y `siigoError`. */
 export const SIIGO_CUSTOMER = catalog([
   { value: "EN_SIIGO", label: "En Siigo", tone: "success" },
   { value: "SIN_ENVIAR", label: "Sin enviar", tone: "warning" },
   { value: "RECHAZADO", label: "Rechazado por Siigo", tone: "danger" },
+] as const);
+
+/**
+ * Embudo de la cotización de un proveedor nuevo. APROBADA sólo se alcanza al
+ * convertirla en proveedor; DESCARTADA la cierra con su motivo.
+ */
+export const QUOTE_STATUS = catalog([
+  { value: "SOLICITADA", label: "Solicitada", tone: "info", hint: "Se le pidió cotización y todavía no responde" },
+  { value: "RECIBIDA", label: "Recibida", tone: "purple", hint: "Llegaron costos, mínimos y tiempos por SKU" },
+  { value: "NEGOCIACION", label: "En negociación", tone: "warning", hint: "Se están ajustando precios o condiciones de compra" },
+  { value: "APROBADA", label: "Aprobada", tone: "success", hint: "Condiciones confirmadas: ya es proveedor" },
+  { value: "DESCARTADA", label: "Descartada", tone: "danger", hint: "No se le compra; queda el motivo" },
+] as const);
+
+export const QUOTE_OPEN = ["SOLICITADA", "RECIBIDA", "NEGOCIACION"] as const;
+
+export const QUOTE_EVENTS = catalog([
+  { value: "CREADA", label: "Creada", tone: "info" },
+  { value: "NOTA", label: "Nota", tone: "neutral" },
+  { value: "ESTADO", label: "Cambio", tone: "purple" },
+  { value: "CONVERTIDA", label: "Proveedor", tone: "success" },
+] as const);
+
+/** De dónde salió el proveedor. */
+export const SUPPLIER_ORIGIN = catalog([
+  { value: "CRM", label: "Cotización", tone: "info", hint: "Convertido en el portal desde una cotización aprobada" },
+  { value: "SIIGO", label: "Siigo", tone: "neutral", hint: "Ya era proveedor en Siigo y se trajo de allá" },
+] as const);
+
+/**
+ * Qué hacer con un SKU según el forecast de compras. Se deriva al leer: es la
+ * comparación entre lo que hay, lo que viene y lo que se va a vender mientras
+ * llega la próxima compra.
+ */
+export const PURCHASE_SIGNAL = catalog([
+  { value: "QUIEBRE", label: "Quiebre", tone: "danger", hint: "Lo despachable se agota antes de que llegue lo que viene en camino o una compra emitida hoy" },
+  { value: "PEDIR", label: "Pedir ya", tone: "warning", hint: "El inventario está en el punto de reorden o por debajo" },
+  { value: "PROGRAMAR", label: "Programar", tone: "info", hint: "Hay que pedir antes de la próxima revisión" },
+  { value: "CUBIERTO", label: "Cubierto", tone: "success", hint: "Lo que hay y lo que viene alcanza hasta la próxima revisión" },
+  { value: "SIN_PROVEEDOR", label: "Sin proveedor", tone: "neutral", hint: "Ningún proveedor tiene condiciones cargadas para este SKU" },
+  { value: "SIN_DEMANDA", label: "Sin demanda", tone: "neutral", hint: "No se ha vendido en los meses de referencia ni tiene forecast" },
+] as const);
+
+/** De dónde sale la demanda mensual con que se planea la compra. */
+export const DEMAND_SOURCE = catalog([
+  { value: "HISTORICO", label: "Histórico", tone: "neutral", hint: "Promedio de unidades vendidas en los últimos meses cerrados" },
+  { value: "FORECAST", label: "Forecast", tone: "purple", hint: "Unidades proyectadas por el comercial para los próximos meses" },
+] as const);
+
+/** Ciclo de una orden de compra. Sólo las EMITIDAS cuentan como mercancía en camino. */
+export const PURCHASE_ORDER_STATUS = catalog([
+  { value: "BORRADOR", label: "Borrador", tone: "neutral", hint: "Generada desde el forecast; se pueden ajustar las cantidades" },
+  { value: "EMITIDA", label: "Emitida", tone: "info", hint: "Enviada al proveedor: cuenta como mercancía en camino" },
+  { value: "RECIBIDA", label: "Recibida", tone: "success", hint: "La mercancía llegó; el inventario lo lleva el ingreso de mercancía" },
+  { value: "ANULADA", label: "Anulada", tone: "danger", hint: "No se va a pedir" },
 ] as const);
 
 /** Resultado de cada entrada de la bitácora de una conexión. */
@@ -294,6 +349,23 @@ export const TRADE_EXECUTION = catalog([
 export const SELLOUT_SOURCE = catalog([
   { value: "ARCHIVO", label: "Archivo", tone: "neutral", hint: "Reporte del portal de la cadena cargado en Excel" },
   { value: "API", label: "API", tone: "info", hint: "Leído directamente del portal de la cadena" },
+] as const);
+
+/**
+ * Ciclo de un ingreso de mercancía. Nace con la factura; el packing slip lo
+ * cierra como RECIBIDO si cuadra con lo facturado o CON_DIFERENCIAS si no.
+ */
+export const RECEIPT_STATUS = catalog([
+  { value: "POR_RECIBIR", label: "Por recibir", tone: "info", hint: "Factura cargada: falta certificar la mercancía con el packing slip" },
+  { value: "RECIBIDO", label: "Recibido", tone: "success", hint: "Lo contado cuadra con lo facturado; los lotes están en bodega" },
+  { value: "CON_DIFERENCIAS", label: "Con diferencias", tone: "warning", hint: "Llegó más o menos de lo facturado: hay que reclamar o ajustar con el proveedor" },
+  { value: "ANULADO", label: "Anulado", tone: "neutral", hint: "La factura se cargó por error o se anuló antes de recibir" },
+] as const);
+
+/** Si un dato del ingreso lo digitó una persona o lo leyó Claude de un documento. */
+export const RECEIPT_SOURCE = catalog([
+  { value: "LECTURA", label: "Lectura con Claude", tone: "purple", hint: "Claude lo leyó del PDF o la foto; una persona lo revisó" },
+  { value: "MANUAL", label: "Manual", tone: "neutral", hint: "Una persona lo digitó" },
 ] as const);
 
 /** Semáforo de vencimiento: la regla de negocio que ordena todo el módulo de inventario. */

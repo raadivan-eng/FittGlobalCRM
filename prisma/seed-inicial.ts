@@ -31,6 +31,16 @@ async function main() {
   // El orden respeta las llaves foráneas: primero lo que depende, luego la raíz.
   await prisma.$transaction([
     prisma.notification.deleteMany(),
+    prisma.purchaseOrderLine.deleteMany(),
+    prisma.purchaseOrder.deleteMany(),
+    prisma.goodsReceiptLot.deleteMany(),
+    prisma.goodsReceiptLine.deleteMany(),
+    prisma.goodsReceipt.deleteMany(),
+    prisma.supplierQuoteEvent.deleteMany(),
+    prisma.supplierQuoteLine.deleteMany(),
+    prisma.supplierQuote.deleteMany(),
+    prisma.supplierProduct.deleteMany(),
+    prisma.supplier.deleteMany(),
     prisma.sellOut.deleteMany(),
     prisma.sellOutImport.deleteMany(),
     prisma.productAlias.deleteMany(),

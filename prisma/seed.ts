@@ -122,6 +122,16 @@ async function main() {
   console.log("🧹 Limpiando base…");
   await prisma.$transaction([
     prisma.notification.deleteMany(),
+    prisma.purchaseOrderLine.deleteMany(),
+    prisma.purchaseOrder.deleteMany(),
+    prisma.goodsReceiptLot.deleteMany(),
+    prisma.goodsReceiptLine.deleteMany(),
+    prisma.goodsReceipt.deleteMany(),
+    prisma.supplierQuoteEvent.deleteMany(),
+    prisma.supplierQuoteLine.deleteMany(),
+    prisma.supplierQuote.deleteMany(),
+    prisma.supplierProduct.deleteMany(),
+    prisma.supplier.deleteMany(),
     prisma.sellOut.deleteMany(),
     prisma.sellOutImport.deleteMany(),
     prisma.productAlias.deleteMany(),
@@ -250,7 +260,9 @@ async function main() {
           lotCode: `L${expiry.getFullYear()}${String(expiry.getMonth() + 1).padStart(2, "0")}-${product.sku.slice(-4)}-${i + 1}`,
           productId: product.id,
           warehouseId: pick(warehouses).id,
-          quantity: int(40, 1400),
+          // Del orden de un mes de venta entre todos los lotes: así el forecast
+          // de compras muestra SKU cubiertos, por pedir y en quiebre.
+          quantity: int(40, 1400) * 5,
           unitCost: round2(product.unitCost * (0.92 + rnd() * 0.16)),
           expiryDate: expiry,
           receivedAt: received,
@@ -634,6 +646,14 @@ async function main() {
   console.log(`🧾 ${orderSeq} pedidos · ${invoiceSeq} facturas`);
 
   // ── Forecast: 13 meses atrás (comparables) + 3 hacia adelante ─────────────
+  // El forecast por producto orbita lo vendido en los últimos seis meses
+  // cerrados: el forecast de compras lo toma como demanda.
+  const soldLines = await prisma.salesOrderLine.findMany({
+    where: { order: { date: { gte: new Date(TODAY.getFullYear(), TODAY.getMonth() - 6, 1), lt: new Date(TODAY.getFullYear(), TODAY.getMonth(), 1) }, status: { not: "ANULADO" } } },
+    select: { productId: true, quantity: true },
+  });
+  const monthlyUnits = new Map<string, number>();
+  for (const l of soldLines) monthlyUnits.set(l.productId, (monthlyUnits.get(l.productId) ?? 0) + l.quantity / 6);
   let forecastCount = 0;
   for (let offset = -13; offset <= 3; offset++) {
     const base = new Date(TODAY.getFullYear(), TODAY.getMonth() + offset, 1);
@@ -664,15 +684,17 @@ async function main() {
     }
 
     // Forecast por producto para el trimestre en curso (drill-down de portafolio)
+    // Uno de cada tres SKU queda sin forecast para que se planee con lo vendido.
     if (offset >= 0 && offset <= 2) {
-      for (const product of products) {
-        const amount = round2(int(3000, 42000) * (1 + offset * 0.04));
+      for (const [i, product] of products.entries()) {
+        const units = Math.round((monthlyUnits.get(product.id) ?? 0) * (0.95 + rnd() * 0.2) * (1 + offset * 0.03));
+        if (i % 3 === 2 || units <= 0) continue;
         await prisma.forecast.create({
           data: {
             period,
             productId: product.id,
-            amount,
-            units: Math.round(amount / product.unitPrice),
+            amount: round2(units * product.unitPrice),
+            units,
             createdById: comercial.id,
           },
         });
@@ -1033,6 +1055,206 @@ async function main() {
     sellOutRows += rows.length;
   }
   console.log(`🛒 ${tradeSeq} actividades de trade · ${sellOutRows} filas de sell-out`);
+
+  // ── Compras: proveedores y cotizaciones ─────────────────────────────────────
+  // Tres proveedores traídos de Siigo, uno aprobado desde una cotización con su
+  // RUT y su Cámara, y cotizaciones en cada etapa del embudo.
+  const condicion = (sku: string) => {
+    const p = products.find((x) => x.sku === sku)!;
+    const produccion = pick([15, 21, 30, 45]);
+    return {
+      sku,
+      description: p.name,
+      productId: p.id,
+      minOrderQty: pick([240, 480, 960, 1200]),
+      unitCost: round2(p.unitCost * (0.9 + rnd() * 0.15)),
+      productionLeadDays: produccion,
+      transitDays: pick([3, 5, 8, 12]),
+    };
+  };
+  const SIIGO_PROVEEDORES = [
+    { name: "Embotelladora del Valle S.A.S.", nit: "900456123", dv: "4", city: "Cali", terms: "Pago a 30 días", days: 30, skus: ["BEB-0101", "BEB-0102"] },
+    { name: "Alimentos Sembrado S.A.", nit: "860012345", dv: "1", city: "Bogotá", terms: "Pago a 45 días", days: 45, skus: ["ABA-0101", "ABA-0102", "ABA-0301"] },
+    { name: "Laboratorios Vitalé Ltda.", nit: "830098765", dv: "2", city: "Medellín", terms: "50% anticipo, 50% contra entrega", days: 0, skus: [] as string[] },
+  ];
+  for (const [i, sp] of SIIGO_PROVEEDORES.entries()) {
+    await prisma.supplier.create({
+      data: {
+        code: `PR-${String(i + 1).padStart(3, "0")}`,
+        name: sp.name,
+        taxId: `${sp.nit}-${sp.dv}`,
+        origin: "SIIGO",
+        city: sp.city,
+        paymentTerms: sp.terms,
+        paymentTermDays: sp.days,
+        siigoId: `demo-${sp.nit}`,
+        ownerId: comercial.id,
+        createdAt: dayOffset(-int(200, 400)),
+        products: { create: sp.skus.map(condicion) },
+      },
+    });
+  }
+
+  const rutDemo = {
+    documentType: "RUT", personType: "JURIDICA", idType: "NIT", idNumber: "901234567", checkDigit: "8",
+    legalName: "Frutales de la Sabana S.A.S.", firstNames: null, lastNames: null, tradeName: "Frutal",
+    address: "Calle 80 # 69-70 Bodega 4", department: "Cundinamarca", departmentCode: "25", city: "Cota", cityCode: "25214",
+    email: "compras@frutalsabana.co", phone: "6017654321", responsibilities: ["05", "07", "48"],
+    legalRepresentative: null, economicActivity: "1030", issuedAt: periodKey(dayOffset(-60)) + "-10",
+  };
+  const aprobado = await prisma.supplier.create({
+    data: {
+      code: "PR-004",
+      name: rutDemo.legalName,
+      taxId: "901234567-8",
+      origin: "CRM",
+      contactName: "Andrés Molina",
+      phone: "+573104567890",
+      email: rutDemo.email,
+      city: "Cota",
+      address: rutDemo.address,
+      paymentTerms: "Pago a 60 días",
+      paymentTermDays: 60,
+      fiscalData: JSON.stringify(rutDemo),
+      chamberData: JSON.stringify({ ...rutDemo, documentType: "CAMARA_COMERCIO", responsibilities: [], legalRepresentative: "Lucía Fernanda Rojas", issuedAt: periodKey(dayOffset(-25)) + "-05" }),
+      ownerId: comercial.id,
+      createdAt: dayOffset(-20),
+    },
+  });
+
+  const COTIZACIONES = [
+    { name: "Frutales de la Sabana", status: "APROBADA", terms: "Pago a 60 días", days: 60, skus: ["BEB-0201", "BEB-0202", "BEB-0203"], answered: true, ago: 40 },
+    { name: "Snacks del Caribe", status: "NEGOCIACION", terms: "Pago a 30 días", days: 30, skus: ["SNK-0101", "SNK-0102"], answered: true, ago: 18 },
+    { name: "Lácteos La Pradera Norte", status: "RECIBIDA", terms: null, days: null, skus: ["LAC-0101", "LAC-0102", "LAC-0201"], answered: true, ago: 9 },
+    { name: "Tostadora Nutty Andes", status: "SOLICITADA", terms: null, days: null, skus: ["SNK-0201", "SNK-0202"], answered: false, ago: 3 },
+    { name: "Aceites Premium del Sur", status: "DESCARTADA", terms: "Contado", days: 0, skus: ["ABA-0201"], answered: true, ago: 70 },
+  ];
+  for (const [i, c] of COTIZACIONES.entries()) {
+    const creada = dayOffset(-c.ago);
+    const lineas = c.skus.map((sku) => {
+      const l = condicion(sku);
+      return c.answered ? l : { sku: l.sku, description: l.description, productId: l.productId };
+    });
+    const convertida = c.status === "APROBADA";
+    await prisma.supplierQuote.create({
+      data: {
+        code: `CT-${String(i + 1).padStart(5, "0")}`,
+        status: c.status,
+        name: c.name,
+        contactName: pick(["Andrés Molina", "Paola Díaz", "Jorge Ramírez", "Carolina Vélez"]),
+        city: pick(["Bogotá", "Medellín", "Barranquilla", "Cali"]),
+        paymentTerms: c.terms,
+        paymentTermDays: c.days,
+        discardReason: c.status === "DESCARTADA" ? "Mínimo de compra muy alto para la rotación del SKU" : null,
+        ownerId: comercial.id,
+        createdById: comercial.id,
+        supplierId: convertida ? aprobado.id : null,
+        convertedAt: convertida ? dayOffset(-20) : null,
+        lastActivityAt: convertida ? dayOffset(-20) : dayOffset(-Math.max(0, c.ago - 2)),
+        createdAt: creada,
+        lines: { create: lineas },
+        events: {
+          create: [
+            { type: "CREADA", body: `Cotización con ${lineas.length} SKU`, userId: comercial.id, occurredAt: creada },
+            ...(convertida
+              ? [{ type: "CONVERTIDA", body: `Convertida en el proveedor PR-004 con RUT y Cámara de Comercio · ${lineas.length} SKU · ${c.terms}`, userId: comercial.id, occurredAt: dayOffset(-20) }]
+              : []),
+          ],
+        },
+      },
+    });
+    if (convertida) {
+      await prisma.supplierProduct.createMany({ data: lineas.map((l) => ({ ...(l as ReturnType<typeof condicion>), supplierId: aprobado.id })) });
+    }
+  }
+  console.log(`🏭 ${SIIGO_PROVEEDORES.length + 1} proveedores · ${COTIZACIONES.length} cotizaciones`);
+
+  // ── Ingresos de mercancía ──────────────────────────────────────────────────
+  // Uno de cada estado: recibido que cuadra, recibido con faltante y dos
+  // facturas por recibir (una ya atrasada) para probar el packing slip.
+  const proveedor = async (code: string) => (await prisma.supplier.findUniqueOrThrow({ where: { code } }));
+  const INGRESOS = [
+    { supplier: "PR-002", invoice: "FE-20871", ago: 25, status: "RECIBIDO", lines: [["ABA-0101", 480, 0], ["ABA-0102", 360, 0]] },
+    { supplier: "PR-001", invoice: "FV-7745", ago: 10, status: "CON_DIFERENCIAS", lines: [["BEB-0101", 600, -24], ["BEB-0102", 480, 0]] },
+    { supplier: "PR-001", invoice: "FV-7781", ago: 12, status: "POR_RECIBIR", lines: [["BEB-0102", 720, 0]] },
+    { supplier: "PR-004", invoice: "FS-00312", ago: 2, status: "POR_RECIBIR", lines: [["BEB-0201", 300, 0], ["BEB-0202", 240, 0], ["BEB-0203", 240, 0]] },
+  ] as const;
+  for (const [i, ing] of INGRESOS.entries()) {
+    const sup = await proveedor(ing.supplier);
+    const facturada = dayOffset(-ing.ago);
+    const recibido = ing.status !== "POR_RECIBIR";
+    const recibidoEl = dayOffset(-ing.ago + 2);
+    const lineas = ing.lines.map(([sku, quantity]) => {
+      const product = products.find((p) => p.sku === sku)!;
+      return { product, sku, quantity, unitCost: round2(product.unitCost * 0.97) };
+    });
+    const warehouse = warehouses[i % warehouses.length];
+    const receipt = await prisma.goodsReceipt.create({
+      data: {
+        code: `IN-${String(i + 1).padStart(5, "0")}`,
+        status: ing.status,
+        source: i % 2 ? "MANUAL" : "LECTURA",
+        supplierId: sup.id,
+        supplierName: sup.name,
+        supplierTaxId: sup.taxId?.split("-")[0] ?? null,
+        invoiceNumber: ing.invoice,
+        invoiceDate: facturada,
+        warehouseId: warehouse.id,
+        receivedNotes: ing.status === "CON_DIFERENCIAS" ? "Llegó una caja menos de BEB-0101; el transportador firmó la novedad. Se pidió nota crédito." : null,
+        createdById: comercial.id,
+        receivedById: recibido ? comercial.id : null,
+        receivedAt: recibido ? recibidoEl : null,
+        createdAt: facturada,
+        lines: { create: lineas.map((l) => ({ productId: l.product.id, sku: l.sku, quantity: l.quantity, unitCost: l.unitCost })) },
+      },
+    });
+    if (!recibido) continue;
+    for (const [j, [, quantity, diff]] of ing.lines.entries()) {
+      const { product, unitCost } = lineas[j];
+      const expiryDate = dayOffset(product.shelfLifeDays - ing.ago);
+      const lotCode = `L${periodKey(facturada).replace("-", "")}-${product.sku.slice(-4)}-R${i + 1}`;
+      await prisma.goodsReceiptLot.create({ data: { receiptId: receipt.id, productId: product.id, lotCode, expiryDate, quantity: quantity + diff, source: "LECTURA", createdAt: recibidoEl } });
+      await prisma.inventoryLot.create({
+        data: { lotCode, productId: product.id, warehouseId: warehouse.id, quantity: quantity + diff, unitCost, expiryDate, receivedAt: recibidoEl, receiptId: receipt.id },
+      });
+    }
+  }
+  console.log(`📥 ${INGRESOS.length} ingresos de mercancía`);
+
+  // ── Órdenes de compra ───────────────────────────────────────────────────────
+  // La recibida es la que llegó con FE-20871; las emitidas cuentan en camino en
+  // el forecast de compras, y la de PR-001 ya tiene su factura por recibir.
+  const ORDENES = [
+    { supplier: "PR-002", status: "RECIBIDA", issued: 70, received: 23, skus: ["ABA-0101", "ABA-0102"] },
+    { supplier: "PR-001", status: "EMITIDA", issued: 40, received: null, skus: ["BEB-0102"] },
+    { supplier: "PR-004", status: "EMITIDA", issued: 8, received: null, skus: ["BEB-0201", "BEB-0203"] },
+  ] as const;
+  for (const [i, oc] of ORDENES.entries()) {
+    const sup = await proveedor(oc.supplier);
+    const condiciones = await prisma.supplierProduct.findMany({ where: { supplierId: sup.id, sku: { in: [...oc.skus] } } });
+    const emitida = dayOffset(-oc.issued);
+    const lines = condiciones.map((c) => {
+      const product = products.find((p) => p.id === c.productId)!;
+      const quantity = Math.ceil(Math.max(c.minOrderQty, (monthlyUnits.get(product.id) ?? 0) * 0.5) / product.unitsPerCase) * product.unitsPerCase;
+      const leadDays = c.productionLeadDays + c.transitDays;
+      return { productId: product.id, quantity, suggestedQty: quantity, unitCost: c.unitCost, leadDays, expectedAt: dayOffset(-oc.issued + leadDays) };
+    });
+    await prisma.purchaseOrder.create({
+      data: {
+        code: `OC-${String(i + 1).padStart(5, "0")}`,
+        supplierId: sup.id,
+        status: oc.status,
+        issuedAt: emitida,
+        expectedAt: dayOffset(-oc.issued + Math.max(...lines.map((l) => l.leadDays))),
+        receivedAt: oc.received ? dayOffset(-oc.received) : null,
+        notes: "Generada desde el forecast de compras",
+        createdById: comercial.id,
+        createdAt: emitida,
+        lines: { create: lines },
+      },
+    });
+  }
+  console.log(`🧾 ${ORDENES.length} órdenes de compra`);
 
   // ── Conexiones externas ────────────────────────────────────────────────────
   // Se crean vacías a propósito: las credenciales reales las carga el

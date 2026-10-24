@@ -84,7 +84,7 @@ function dia(v: unknown) {
 const id = () => crypto.randomUUID();
 
 /** createMany partido para no pasar el tope de parámetros de D1. */
-async function enLotes<T extends object>(filas: T[], crear: (data: T[]) => Promise<unknown>) {
+export async function enLotes<T extends object>(filas: T[], crear: (data: T[]) => Promise<unknown>) {
   if (!filas.length) return;
   // +3 por las columnas con valor por defecto que Prisma añade a cada fila.
   const porLote = Math.max(1, Math.floor(MAX_PARAMS / (Object.keys(filas[0]).length + 3)));

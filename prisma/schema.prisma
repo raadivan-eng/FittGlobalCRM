@@ -44,6 +44,13 @@ model User {
   sellOutImports     SellOutImport[]
   tradeActivities    TradeActivity[]      @relation("TradeOwner")
   tradeChecks        TradeExecution[]
+  suppliersOwned     Supplier[]           @relation("SupplierOwner")
+  quotesOwned        SupplierQuote[]      @relation("QuoteOwner")
+  purchaseOrders     PurchaseOrder[]      @relation("PurchaseOrderCreator")
+  quotesCreated      SupplierQuote[]      @relation("QuoteCreator")
+  quoteEvents        SupplierQuoteEvent[]
+  receiptsCreated    GoodsReceipt[]       @relation("ReceiptCreator")
+  receiptsReceived   GoodsReceipt[]       @relation("ReceiptReceiver")
 
   @@index([role, active])
 }
@@ -297,6 +304,11 @@ model Product {
   sellOut      SellOut[]
   aliases      ProductAlias[]
   tradeIn      TradeActivityProduct[]
+  quotedIn     SupplierQuoteLine[]
+  suppliedBy   SupplierProduct[]
+  invoicedIn   GoodsReceiptLine[]
+  receivedIn   GoodsReceiptLot[]
+  purchasedIn  PurchaseOrderLine[]
 
   @@index([category, active])
 }
@@ -307,7 +319,8 @@ model Warehouse {
   name String
   city String
 
-  lots InventoryLot[]
+  lots     InventoryLot[]
+  receipts GoodsReceipt[]
 }
 
 /// Lote con fecha de vencimiento: base del control de caducidad.
@@ -321,12 +334,86 @@ model InventoryLot {
   expiryDate  DateTime
   receivedAt  DateTime @default(now())
   status      String   @default("DISPONIBLE") // DISPONIBLE | BLOQUEADO | LIQUIDACION | MERMA
+  receiptId   String? // ingreso de mercancía que lo dio de alta; null en lotes previos al módulo
 
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  receipt   GoodsReceipt? @relation(fields: [receiptId], references: [id], onDelete: SetNull)
 
   @@index([expiryDate])
   @@index([productId])
+  @@index([receiptId])
+}
+
+/// Ingreso de mercancía. Nace con la factura del proveedor (POR_RECIBIR): lo
+/// que se cobró, por SKU. Al llegar la mercancía se certifica con el packing
+/// slip —lote, vencimiento y cantidad leídos de fotos de las etiquetas—, que
+/// se contrasta con lo facturado y da de alta los lotes en la bodega.
+model GoodsReceipt {
+  id            String    @id @default(cuid())
+  code          String    @unique // consecutivo interno IN-00001
+  status        String    @default("POR_RECIBIR") // POR_RECIBIR | RECIBIDO | CON_DIFERENCIAS | ANULADO
+  source        String    @default("MANUAL") // MANUAL | LECTURA: digitada o leída de la factura con Claude
+  supplierId    String?
+  supplierName  String // como viene en la factura, aunque el proveedor no esté dado de alta
+  supplierTaxId String?
+  invoiceNumber String
+  invoiceDate   DateTime?
+  warehouseId   String
+  notes         String?
+  receivedNotes String? // explicación de las diferencias contra la factura
+  createdById   String?
+  receivedById  String?
+  receivedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  supplier   Supplier?          @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  warehouse  Warehouse          @relation(fields: [warehouseId], references: [id])
+  createdBy  User?              @relation("ReceiptCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  receivedBy User?              @relation("ReceiptReceiver", fields: [receivedById], references: [id], onDelete: SetNull)
+  lines      GoodsReceiptLine[]
+  lots       GoodsReceiptLot[]
+  stock      InventoryLot[]
+
+  @@index([invoiceNumber])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// Renglón de la factura: lo que el proveedor cobró de un producto del catálogo.
+model GoodsReceiptLine {
+  id          String  @id @default(cuid())
+  receiptId   String
+  productId   String
+  sku         String // código como viene en la factura; puede ser el del proveedor
+  description String?
+  quantity    Int // unidades facturadas
+  unitCost    Float // costo por unidad, sin IVA
+
+  receipt GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id])
+
+  @@index([receiptId])
+}
+
+/// Renglón del packing slip: un lote que llegó, con su vencimiento y las
+/// unidades contadas. Es la constancia de lo recibido; el inventario vive en
+/// InventoryLot y cambia con los despachos, esto no.
+model GoodsReceiptLot {
+  id         String   @id @default(cuid())
+  receiptId  String
+  productId  String
+  lotCode    String
+  expiryDate DateTime
+  quantity   Int
+  source     String   @default("MANUAL") // MANUAL | LECTURA: digitado o leído de la foto
+  createdAt  DateTime @default(now())
+
+  receipt GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id])
+
+  @@index([receiptId])
 }
 
 // ─────────────────────────────  Ventas y forecast  ────────────────────────────
@@ -533,6 +620,182 @@ model LeadEvent {
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([leadId, occurredAt])
+}
+
+// ────────────────────────────  Compras: proveedores  ──────────────────────────
+
+/// Proveedor. Entra de dos maneras: traído de Siigo, donde ya era tercero
+/// (origin SIIGO), o convertido desde una cotización aprobada en el portal
+/// (origin CRM), con su RUT y su certificado de Cámara de Comercio. El NIT es
+/// la llave que los cruza: una cotización de un NIT que ya es proveedor se suma
+/// a sus condiciones en lugar de crear otro.
+model Supplier {
+  id              String   @id @default(cuid())
+  code            String   @unique // PR-001
+  name            String
+  taxId           String? // NIT con dígito de verificación, «900123456-7»
+  origin          String   @default("CRM") // CRM | SIIGO
+  contactName     String?
+  phone           String?
+  email           String?
+  city            String?
+  address         String?
+  paymentTerms    String? // condiciones de compra pactadas, «Pago a 30 días»
+  paymentTermDays Int? // plazo en días; 0 es de contado
+  notes           String?
+  active          Boolean  @default(true)
+  siigoId         String? // id del tercero en Siigo
+  fiscalData      String? // JSON leído del RUT; es lo que alimenta el tercero en Siigo
+  chamberData     String? // JSON leído del certificado de Cámara de Comercio
+  siigoError      String? // por qué falló el último envío a Siigo
+  ownerId         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  owner    User?             @relation("SupplierOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  products SupplierProduct[]
+  quotes   SupplierQuote[]
+  receipts GoodsReceipt[]
+  orders   PurchaseOrder[]
+
+  @@index([taxId])
+  @@index([active, origin])
+}
+
+/// Condiciones de compra vigentes de un SKU con un proveedor: lo que quedó de
+/// la cotización aprobada, o lo que se cargó después en su ficha.
+model SupplierProduct {
+  id                 String   @id @default(cuid())
+  supplierId         String
+  sku                String // código del SKU; si coincide con el catálogo queda enlazado
+  description        String?
+  productId          String?
+  minOrderQty        Int // cantidad mínima de compra, en unidades
+  unitCost           Float // costo por unidad, sin IVA
+  productionLeadDays Int // días que tarda en producirse desde la orden
+  transitDays        Int // días de viaje desde el proveedor hasta la bodega
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product  Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([supplierId, sku])
+  @@index([productId])
+}
+
+/// Cotización de un proveedor nuevo: la etapa antes de darlo de alta. Por cada
+/// SKU se le pide cantidad mínima, costo y tiempos de producción y de tránsito;
+/// las condiciones de compra son de toda la cotización. Al confirmarlas se
+/// aprueba y se convierte en proveedor, con su RUT y su Cámara de Comercio.
+model SupplierQuote {
+  id              String    @id @default(cuid())
+  code            String    @unique // consecutivo interno CT-00001
+  status          String    @default("SOLICITADA") // SOLICITADA | RECIBIDA | NEGOCIACION | APROBADA | DESCARTADA
+  name            String // el proveedor, como se le conoce mientras no hay RUT
+  contactName     String?
+  phone           String?
+  email           String?
+  city            String?
+  paymentTerms    String? // condiciones de compra, «Pago a 30 días»
+  paymentTermDays Int?
+  discardReason   String?
+  notes           String?
+  ownerId         String?
+  createdById     String?
+  supplierId      String? // proveedor en que se convirtió
+  convertedAt     DateTime?
+  lastActivityAt  DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  owner     User?                @relation("QuoteOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdBy User?                @relation("QuoteCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  supplier  Supplier?            @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  lines     SupplierQuoteLine[]
+  events    SupplierQuoteEvent[]
+
+  @@index([status])
+}
+
+/// Un SKU cotizado: las preguntas que se le hacen al proveedor por producto.
+/// Las respuestas quedan vacías mientras no conteste; para convertir la
+/// cotización en proveedor todas deben estar.
+model SupplierQuoteLine {
+  id                 String   @id @default(cuid())
+  quoteId            String
+  sku                String
+  description        String?
+  productId          String?
+  minOrderQty        Int? // cantidad mínima de compra, en unidades
+  unitCost           Float? // costo por unidad, sin IVA
+  productionLeadDays Int? // días de producción desde la orden
+  transitDays        Int? // días de tránsito hasta la bodega
+  createdAt          DateTime @default(now())
+
+  quote   SupplierQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([quoteId, sku])
+  @@index([productId])
+}
+
+/// Bitácora de la cotización: notas del equipo, cambios de estado y la conversión.
+model SupplierQuoteEvent {
+  id         String   @id @default(cuid())
+  quoteId    String
+  type       String // CREADA | NOTA | ESTADO | CONVERTIDA
+  body       String
+  userId     String?
+  occurredAt DateTime @default(now())
+
+  quote SupplierQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  user  User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([quoteId, occurredAt])
+}
+
+/// Orden de compra a un proveedor. Nace del forecast de compras como BORRADOR
+/// con lo sugerido para cada SKU; al emitirse cuenta como mercancía en camino
+/// en el forecast hasta que se marca recibida o se anula.
+model PurchaseOrder {
+  id          String    @id @default(cuid())
+  code        String    @unique // consecutivo interno OC-00001
+  supplierId  String
+  status      String    @default("BORRADOR") // BORRADOR | EMITIDA | RECIBIDA | ANULADA
+  issuedAt    DateTime?
+  expectedAt  DateTime? // la llegada más tardía de sus renglones, contada desde la emisión
+  receivedAt  DateTime?
+  notes       String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  supplier  Supplier            @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  createdBy User?               @relation("PurchaseOrderCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  lines     PurchaseOrderLine[]
+
+  @@index([status])
+  @@index([supplierId])
+}
+
+/// Un SKU de la orden. Guarda lo que sugirió el forecast al generarla, para
+/// medir cuánto se corrige a mano, y las condiciones con que se pidió.
+model PurchaseOrderLine {
+  id           String    @id @default(cuid())
+  orderId      String
+  productId    String
+  quantity     Int // unidades a pedir
+  suggestedQty Int // lo que sugirió el forecast de compras
+  unitCost     Float // costo por unidad sin IVA, de las condiciones del proveedor
+  leadDays     Int // producción más tránsito
+  expectedAt   DateTime? // emisión más lead time
+
+  order   PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product       @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
 }
 
 // ──────────────────────────  Trade: sell-out y actividades  ─────────────────────

@@ -88,8 +88,8 @@ export async function clearSessionCookie() {
 
 /** Qué secciones ve cada rol. Se usa tanto en el menú como en los guards de página. */
 export const ACCESS: Record<string, string[]> = {
-  ADMIN: ["dashboard", "avisos", "leads", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ventas", "forecast", "reportes", "sellout", "trade", "conexiones", "usuarios"],
-  COMERCIAL: ["dashboard", "avisos", "leads", "clientes", "contactos", "tiendas", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ventas", "forecast", "reportes", "sellout", "trade"],
+  ADMIN: ["dashboard", "avisos", "leads", "clientes", "contactos", "tiendas", "equipo", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ingresos", "ventas", "forecast", "reportes", "sellout", "trade", "proveedores", "compras", "conexiones", "usuarios"],
+  COMERCIAL: ["dashboard", "avisos", "leads", "clientes", "contactos", "tiendas", "rutas", "visitas", "novedades", "guias", "productos", "inventario", "ingresos", "ventas", "forecast", "reportes", "sellout", "trade", "proveedores", "compras"],
   // Sólo secciones sin acciones abiertas a este perfil: las mutaciones de ventas
   // y forecast exigen ADMIN o COMERCIAL, así que aquí todo es de consulta.
   BASIC: ["dashboard", "clientes", "contactos", "tiendas", "productos", "inventario", "ventas"],
@@ -106,6 +106,15 @@ export const TRADE_CHECK_ROLES = ["ADMIN", "COMERCIAL", "SUPERVISOR"];
 
 /** Quiénes crean, corrigen y vinculan contactos de clientes y tiendas; los demás sólo los consultan. */
 export const CONTACT_ROLES = ["ADMIN", "COMERCIAL", "SUPERVISOR"];
+
+/** Quiénes cotizan y dan de alta proveedores, y cargan sus condiciones de compra. */
+export const SUPPLIER_ROLES = ["ADMIN", "COMERCIAL"];
+
+/** Quiénes ajustan la demanda del forecast de compras y generan, emiten o anulan órdenes de compra. */
+export const PURCHASE_ROLES = ["ADMIN", "COMERCIAL"];
+
+/** Quiénes cargan facturas de proveedor y certifican el ingreso de la mercancía a bodega. */
+export const RECEIPT_ROLES = ["ADMIN", "COMERCIAL"];
 
 /** Quiénes corrigen la ficha de un cliente (clasificación, datos comerciales y crédito). */
 export const CLIENT_ROLES = ["ADMIN", "COMERCIAL"];

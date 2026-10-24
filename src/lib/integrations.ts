@@ -147,6 +147,8 @@ export const PROVIDERS: Provider[] = [
         brings: [
           "Terceros de Siigo para cruzarlos con los clientes del portal",
           "Alta en Siigo del cliente que nace de un lead, con los datos de su RUT",
+          "Proveedores que ya existen en Siigo, traídos a Proveedores",
+          "Alta en Siigo del proveedor que nace de una cotización aprobada, con su RUT",
         ],
         suggestedPartnerId: "CRMFittGlobalClientes",
         probe: { path: "/v1/customers", noun: "clientes" },
@@ -165,10 +167,10 @@ export const PROVIDERS: Provider[] = [
     kind: "SISTEMA",
     category: "FACTURACION",
     name: "Claude",
-    tagline: "Lectura del RUT al convertir leads en clientes",
+    tagline: "Lectura del RUT y la Cámara de Comercio de clientes y proveedores",
     brings: [
-      "Razón social, NIT, dirección y responsabilidades fiscales leídas del documento al convertir un lead",
-      "Funciona con el PDF de la DIAN o una foto legible; sin esta conexión no se pueden convertir leads",
+      "Razón social, NIT, dirección y responsabilidades fiscales leídas del documento al convertir un lead o una cotización",
+      "Funciona con el PDF de la DIAN o una foto legible; sin esta conexión no se pueden convertir leads ni cotizaciones",
     ],
     endpoint: "GET https://api.anthropic.com/v1/models",
     docsUrl: "https://platform.claude.com/docs/en/build-with-claude/pdf-support",

@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  IconAlert, IconBell, IconClients, IconContacts, IconDashboard, IconExpiry, IconForecast, IconLead,
-  IconMegaphone, IconMenu, IconPlug, IconRotation, IconShield, IconProduct, IconReports, IconRoute, IconSales, IconStore,
+  IconAlert, IconBell, IconCart, IconClients, IconContacts, IconDashboard, IconExpiry, IconForecast, IconLead,
+  IconMegaphone, IconMenu, IconOrder, IconPlug, IconReceive, IconRotation, IconShield, IconProduct, IconQuote, IconReports, IconFactory, IconRoute, IconSales, IconStore,
   IconTeam, IconTruck, IconVisit, IconX,
 } from "./icons";
 import { BrandTile } from "./brand-mark";
@@ -35,10 +35,20 @@ const GROUPS: { title: string; items: Item[] }[] = [
     ],
   },
   {
-    title: "Portafolio",
+    title: "Bodega",
     items: [
       { section: "productos", href: "/productos", label: "Productos", Icon: IconProduct },
       { section: "inventario", href: "/inventario", label: "Inventario y vencimientos", Icon: IconExpiry },
+      { section: "ingresos", href: "/ingresos", label: "Ingresos de mercancía", Icon: IconReceive },
+    ],
+  },
+  {
+    title: "Compras",
+    items: [
+      { section: "proveedores", href: "/cotizaciones", label: "Cotizaciones", Icon: IconQuote },
+      { section: "proveedores", href: "/proveedores", label: "Proveedores", Icon: IconFactory },
+      { section: "compras", href: "/compras", label: "Forecast de compras", Icon: IconCart },
+      { section: "compras", href: "/ordenes-compra", label: "Órdenes de compra", Icon: IconOrder },
     ],
   },
   {

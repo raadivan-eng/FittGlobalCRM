@@ -55,6 +55,7 @@ export const IconTrash = base('<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><p
 export const IconPhone = base('<path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5Z"/>');
 export const IconMail = base('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6 8.5-6"/>');
 export const IconTarget = base('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>');
+export const IconReceive = base('<path d="M3.5 8.5 12 4l8.5 4.5V19a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M12 9v7"/><path d="m8.8 12.8 3.2 3.2 3.2-3.2"/>');
 export const IconExpiry = base('<circle cx="12" cy="13" r="8"/><path d="M12 9v4.2l2.8 1.6"/><path d="M9 2.5h6"/><path d="m19.5 6.5 1.5-1.5"/>');
 export const IconBuilding = base('<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 7h2M14 7h2M8 11h2M14 11h2M8 15h2M14 15h2"/><path d="M10 21v-3h4v3"/>');
 export const IconPlug = base('<path d="M9 2v6M15 2v6"/><path d="M6 8h12v3.2a6 6 0 0 1-12 0z"/><path d="M12 17.2V22"/>');
@@ -69,3 +70,7 @@ export const IconLead = base('<circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6
 export const IconRotation = base('<path d="M3 3v18h18"/><path d="M7 15.5 10.5 12l3 2.5L20 8"/><path d="M16 8h4v4"/><circle cx="7" cy="19" r=".01"/>');
 export const IconMegaphone = base('<path d="M3.5 10v4a1 1 0 0 0 1 1H7l7.5 4.5V4.5L7 9H4.5a1 1 0 0 0-1 1Z"/><path d="M7.5 15 9 20.5h2.5"/><path d="M18 9a4 4 0 0 1 0 6"/>');
 export const IconUpload = base('<path d="M12 15.5V4"/><path d="m7 8.5 5-5 5 5"/><path d="M4 15v4a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 19v-4"/>');
+export const IconQuote = base('<rect x="5" y="3.5" width="14" height="18" rx="2"/><path d="M9 3.5V5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V3.5"/><path d="M9 11h6M9 15h4"/>');
+export const IconCart = base('<path d="M2.5 3.5h2.6l2.3 11.2a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.4-1.1l1.8-6.8H6.2"/><circle cx="9.5" cy="20" r="1.4"/><circle cx="17.5" cy="20" r="1.4"/>');
+export const IconOrder = base('<path d="M6 2.5h9l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V4a1.5 1.5 0 0 1 1-1.5Z"/><path d="M14.5 2.5V7h4.5"/><path d="M8.5 12h7M8.5 15.5h7M8.5 8.5h3"/>');
+export const IconFactory = base('<path d="M3 21V10l5 3V10l5 3V10l5 3V4h3v17z"/><path d="M2 21h20"/><path d="M7 17h2M12 17h2"/>');

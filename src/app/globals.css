@@ -389,3 +389,19 @@
     overflow: hidden;
   }
 }
+
+/* Documentos para imprimir (packing slip): sin controles y en papel blanco sin importar el tema. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-doc,
+  .print-doc * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  body:has(.print-doc) {
+    background: #fff !important;
+  }
+}
