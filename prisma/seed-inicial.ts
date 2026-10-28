@@ -63,6 +63,7 @@ async function main() {
     prisma.visit.deleteMany(),
     prisma.storeAssignment.deleteMany(),
     prisma.salesOrderLine.deleteMany(),
+    prisma.creditNote.deleteMany(),
     prisma.invoice.deleteMany(),
     prisma.salesOrder.deleteMany(),
     prisma.forecastExclusion.deleteMany(),

@@ -154,6 +154,7 @@ async function main() {
     prisma.visit.deleteMany(),
     prisma.storeAssignment.deleteMany(),
     prisma.salesOrderLine.deleteMany(),
+    prisma.creditNote.deleteMany(),
     prisma.invoice.deleteMany(),
     prisma.salesOrder.deleteMany(),
     prisma.forecastExclusion.deleteMany(),
@@ -554,6 +555,7 @@ async function main() {
   // ── Pedidos, facturación y forecast (14 meses hacia atrás) ─────────────────
   let orderSeq = 0;
   let invoiceSeq = 0;
+  let creditSeq = 0;
   const monthlyReal = new Map<string, number>();
   const companyPeriodReal = new Map<string, number>();
 
@@ -622,7 +624,7 @@ async function main() {
           const paid = overdue
             ? chance(daysPastDue > 90 ? 0.985 : daysPastDue > 45 ? 0.93 : 0.72)
             : chance(0.35);
-          await prisma.invoice.create({
+          const invoice = await prisma.invoice.create({
             data: {
               number: `FV-${String(invoiceSeq).padStart(6, "0")}`,
               orderId: order.id,
@@ -635,6 +637,24 @@ async function main() {
               status: paid ? "PAGADA" : overdue ? "VENCIDA" : chance(0.3) ? "PARCIAL" : "EMITIDA",
             },
           });
+          // Una de cada 23 facturas tiene una nota crédito por devolución unos días
+          // después. Sale de la secuencia y no del PRNG para no alterar el resto de la siembra.
+          if (invoiceSeq % 23 === 0) {
+            creditSeq++;
+            const share = [0.08, 0.15, 0.25, 1][creditSeq % 4];
+            const issueDate = new Date(Math.min(date.getTime() + (3 + (creditSeq % 9)) * 86_400_000, TODAY.getTime()));
+            await prisma.creditNote.create({
+              data: {
+                number: `NC-${String(creditSeq).padStart(5, "0")}`,
+                companyId: company.id,
+                invoiceId: invoice.id,
+                issueDate,
+                net: round2(total * share),
+                total: round2(grand * share),
+                reason: share === 1 ? "Anulación de la factura por error en el pedido" : "Devolución por producto averiado en el transporte",
+              },
+            });
+          }
           // El forecast se mide sin IVA.
           monthlyReal.set(period, (monthlyReal.get(period) ?? 0) + total);
           const key = `${period}|${company.id}`;
@@ -643,7 +663,7 @@ async function main() {
       }
     }
   }
-  console.log(`🧾 ${orderSeq} pedidos · ${invoiceSeq} facturas`);
+  console.log(`🧾 ${orderSeq} pedidos · ${invoiceSeq} facturas · ${creditSeq} notas crédito`);
 
   // ── Forecast: 13 meses atrás (comparables) + 3 hacia adelante ─────────────
   // El forecast por producto orbita lo vendido en los últimos seis meses

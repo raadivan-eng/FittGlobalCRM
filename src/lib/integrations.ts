@@ -139,7 +139,7 @@ export const PROVIDERS: Provider[] = [
         brings: ["Facturas de venta y notas crédito emitidas en Siigo", "Estado de cartera y pagos aplicados por cliente"],
         suggestedPartnerId: "CRMFittGlobalFacturacion",
         probe: { path: "/v1/invoices", noun: "facturas" },
-        sync: "Trae las facturas desde enero de 2026 a Ventas y facturación. Cada noche entra lo nuevo.",
+        sync: "Trae las facturas y notas crédito desde enero de 2026 a Ventas y facturación. Cada noche entra lo nuevo.",
       },
       {
         key: "CLIENTES",

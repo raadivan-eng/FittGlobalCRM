@@ -85,6 +85,7 @@ model Company {
   contacts           Contact[]
   orders             SalesOrder[]
   invoices           Invoice[]
+  creditNotes        CreditNote[]
   forecasts          Forecast[]
   forecastExclusions ForecastExclusion[]
   shipments          Shipment[]
@@ -472,11 +473,32 @@ model Invoice {
   paidAmount Float    @default(0)
   status     String   @default("EMITIDA") // EMITIDA | PARCIAL | PAGADA | VENCIDA | ANULADA
 
-  order   SalesOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  order       SalesOrder?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  creditNotes CreditNote[]
 
   @@index([issueDate])
   @@index([status])
+}
+
+/// Nota crédito de Siigo (devolución o descuento posterior). Resta de la
+/// facturación en su propia fecha de emisión, no en la de la factura que afecta.
+model CreditNote {
+  id        String   @id @default(cuid())
+  number    String   @unique // NC-1-23, la llave para reconocerla en la siguiente sincronización
+  companyId String
+  invoiceId String?
+  issueDate DateTime
+  net       Float    @default(0) // antes de IVA: lo que se descuenta de la facturación
+  total     Float    @default(0) // con IVA
+  reason    String?
+  createdAt DateTime @default(now())
+
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([issueDate])
+  @@index([companyId])
 }
 
 /// Proyección de venta cargada por el comercial. Se compara contra facturación real.

@@ -8,6 +8,9 @@ import { SiigoLimitError, siigoAuth, siigoGet } from "./siigo";
 /**
  * Sincronización de las facturas de venta de Siigo (módulo Facturación).
  *
+ * Cada pasada recorre primero las facturas y después las notas crédito, que
+ * entran aparte y restan de la facturación en Ventas.
+ *
  * Cada factura de Siigo entra como un pedido FACTURADO con sus líneas y su
  * factura, ambos con el número de Siigo (FV-1-123): ese número es la llave para
  * reconocerla en la siguiente pasada y sólo actualizar saldo y estado.
@@ -39,6 +42,8 @@ export type SyncMode = "COMPLETA" | "NOVEDADES";
 
 type Cursor = {
   modo: SyncMode;
+  /** Qué listado de Siigo se está recorriendo. Sin valor, las facturas. */
+  fase?: "FACTURAS" | "NOTAS";
   /** `updated_start` de una pasada de novedades. */
   desde?: string;
   page: number;
@@ -47,6 +52,7 @@ type Cursor = {
   actualizadas: number;
   clientes: number;
   productos: number;
+  notas?: number;
   /** Token de Siigo cifrado: vale 24 h y así no se pide uno por lote. */
   token?: string;
   tokenHasta?: number;
@@ -62,6 +68,9 @@ export type SiigoSyncBatch = {
   actualizadas: number;
   clientes: number;
   productos: number;
+  notas: number;
+  /** Qué listado recorrió este lote. */
+  fase: "FACTURAS" | "NOTAS";
   error?: string;
   /** Siigo cortó por cuota: el lote no avanzó y hay que reintentar pasado este tiempo. */
   retryAfterSeconds?: number;
@@ -139,20 +148,17 @@ async function clienteSiigo(token: string, partnerId: string, nit: string) {
   }
 }
 
-type Conteo = { nuevas: number; actualizadas: number; clientes: number; productos: number };
-
-async function importar(facturas: Json[], token: string, partnerId: string): Promise<Conteo> {
-  const conteo: Conteo = { nuevas: 0, actualizadas: 0, clientes: 0, productos: 0 };
-  const validas = facturas.filter((f) => asText(f.name) && dia(f.date) && nitBase(asRecord(f.customer).identification));
-  if (!validas.length) return conteo;
-
-  // Clientes: se cruzan por NIT; los que no existen se crean con los datos del tercero en Siigo.
+/**
+ * Clientes de un lote de documentos, por NIT: se cruzan con el portal y los que
+ * no existen se crean con los datos del tercero en Siigo.
+ */
+async function empresasPorNit(documentos: Json[], token: string, partnerId: string, conteo: { clientes: number }) {
   const empresas = await prisma.company.findMany({
     where: { taxId: { not: null } },
     select: { id: true, taxId: true, paymentTermDays: true },
   });
   const porNit = new Map(empresas.map((c) => [nitBase(c.taxId), c]));
-  const faltan = [...new Set(validas.map((f) => nitBase(asRecord(f.customer).identification)))].filter((n) => !porNit.has(n));
+  const faltan = [...new Set(documentos.map((f) => nitBase(asRecord(f.customer).identification)))].filter((n) => !porNit.has(n));
   if (faltan.length) {
     const nuevas = [];
     for (const nit of faltan) {
@@ -173,6 +179,75 @@ async function importar(facturas: Json[], token: string, partnerId: string): Pro
       porNit.set(c.code.slice("SIIGO-".length), { id: c.id, taxId: null, paymentTermDays: c.paymentTermDays });
     }
   }
+
+  return porNit;
+}
+
+type Conteo = { nuevas: number; actualizadas: number; clientes: number; productos: number };
+
+/** Valor antes de IVA de los ítems de un documento de Siigo, con el descuento de cada línea. */
+function netoItems(items: Json[]) {
+  return round2(items.reduce((s, i) => s + num(i.quantity) * num(i.price) * (1 - num(asRecord(i.discount).percentage) / 100), 0));
+}
+
+/**
+ * Notas crédito: se reconocen por número (NC-1-23). Si Siigo cambia una ya
+ * importada, se actualizan sus valores; la factura afectada se cruza por número.
+ */
+async function importarNotas(notas: Json[], token: string, partnerId: string, conteo: { clientes: number }) {
+  const validas = notas.filter((n) => asText(n.name) && dia(n.date) && nitBase(asRecord(n.customer).identification));
+  if (!validas.length) return 0;
+  const porNit = await empresasPorNit(validas, token, partnerId, conteo);
+
+  const numerosFactura = [...new Set(validas.map((n) => asText(asRecord(n.invoice).name)).filter(Boolean))];
+  const facturas = new Map(
+    (await prisma.invoice.findMany({ where: { number: { in: numerosFactura } }, select: { id: true, number: true } })).map((i) => [i.number, i.id]),
+  );
+  const existentes = new Map(
+    (
+      await prisma.creditNote.findMany({
+        where: { number: { in: validas.map((n) => asText(n.name)) } },
+        select: { id: true, number: true, net: true, total: true, invoiceId: true, issueDate: true },
+      })
+    ).map((n) => [n.number, n]),
+  );
+
+  const nuevas = [];
+  for (const n of validas) {
+    const numero = asText(n.name);
+    const items = lista(n.items);
+    const net = netoItems(items);
+    const tax = round2(items.reduce((s, i) => s + lista(i.taxes).reduce((t, x) => t + num(x.value), 0), 0));
+    const datos = {
+      companyId: porNit.get(nitBase(asRecord(n.customer).identification))!.id,
+      invoiceId: facturas.get(asText(asRecord(n.invoice).name)) ?? null,
+      issueDate: dia(n.date)!,
+      net,
+      total: num(n.total) || round2(net + tax),
+      reason: asText(n.observations).trim() || null,
+    };
+    const previa = existentes.get(numero);
+    if (!previa) {
+      nuevas.push({ id: id(), number: numero, ...datos });
+    } else if (
+      previa.net !== datos.net ||
+      previa.total !== datos.total ||
+      previa.invoiceId !== datos.invoiceId ||
+      previa.issueDate.getTime() !== datos.issueDate.getTime()
+    ) {
+      await prisma.creditNote.updateMany({ where: { id: previa.id }, data: datos });
+    }
+  }
+  await enLotes(nuevas, (data) => prisma.creditNote.createMany({ data }));
+  return nuevas.length;
+}
+
+async function importar(facturas: Json[], token: string, partnerId: string): Promise<Conteo> {
+  const conteo: Conteo = { nuevas: 0, actualizadas: 0, clientes: 0, productos: 0 };
+  const validas = facturas.filter((f) => asText(f.name) && dia(f.date) && nitBase(asRecord(f.customer).identification));
+  if (!validas.length) return conteo;
+
+  const porNit = await empresasPorNit(validas, token, partnerId, conteo);
 
   // Productos: el código de Siigo es el SKU del portal; los que no existen quedan por revisar.
   const items = validas.flatMap((f) => lista(f.items));
@@ -309,6 +384,8 @@ export async function siigoSyncBatch(opts: { userId: string | null; modo: SyncMo
     actualizadas: cursor.actualizadas,
     clientes: cursor.clientes,
     productos: cursor.productos,
+    notas: cursor.notas ?? 0,
+    fase: cursor.fase ?? "FACTURAS",
     ...extra,
   });
 
@@ -323,29 +400,44 @@ export async function siigoSyncBatch(opts: { userId: string | null; modo: SyncMo
     const query: Record<string, string> = { date_start: SIIGO_DESDE, page: String(cursor.page), page_size: String(PAGE_SIZE) };
     if (cursor.modo === "NOVEDADES" && cursor.desde) query.updated_start = cursor.desde;
 
-    const body = await siigoGet(token, mod.partnerId, "/v1/invoices", query);
-    const facturas = lista(body.results);
-    const total = num(asRecord(body.pagination).total_results) || facturas.length;
+    const enNotas = cursor.fase === "NOTAS";
+    const body = await siigoGet(token, mod.partnerId, enNotas ? "/v1/credit-notes" : "/v1/invoices", query);
+    const documentos = lista(body.results);
+    const total = num(asRecord(body.pagination).total_results) || documentos.length;
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-    const conteo = await importar(facturas, token, mod.partnerId);
-    cursor.nuevas += conteo.nuevas;
-    cursor.actualizadas += conteo.actualizadas;
-    cursor.clientes += conteo.clientes;
-    cursor.productos += conteo.productos;
+    if (enNotas) {
+      const conteo = { clientes: 0 };
+      cursor.notas = (cursor.notas ?? 0) + (await importarNotas(documentos, token, mod.partnerId, conteo));
+      cursor.clientes += conteo.clientes;
+    } else {
+      const conteo = await importar(documentos, token, mod.partnerId);
+      cursor.nuevas += conteo.nuevas;
+      cursor.actualizadas += conteo.actualizadas;
+      cursor.clientes += conteo.clientes;
+      cursor.productos += conteo.productos;
+    }
 
     const page = cursor.page;
-    if (facturas.length === PAGE_SIZE && page < pages) {
+    if (documentos.length === PAGE_SIZE && page < pages) {
       cursor.page++;
       await guardar({ syncCursor: JSON.stringify(cursor) });
       return resultado({ page, pages, total });
     }
+    // Terminadas las facturas, el siguiente lote empieza las notas crédito.
+    if (!enNotas) {
+      cursor.fase = "NOTAS";
+      cursor.page = 1;
+      await guardar({ syncCursor: JSON.stringify(cursor) });
+      return resultado({ page, pages, total, fase: "FACTURAS" });
+    }
 
     const partes = [
-      cursor.modo === "COMPLETA" ? `${total} facturas desde enero de 2026` : `${total} facturas con cambios`,
+      cursor.modo === "COMPLETA" ? "Facturas desde enero de 2026" : "Facturas con cambios",
       `${cursor.nuevas} nuevas`,
       `${cursor.actualizadas} actualizadas`,
     ];
+    if (cursor.notas) partes.push(`${cursor.notas} notas crédito`);
     if (cursor.clientes) partes.push(`${cursor.clientes} clientes creados`);
     if (cursor.productos) partes.push(`${cursor.productos} productos por revisar`);
     const detalle = partes.join(" · ");

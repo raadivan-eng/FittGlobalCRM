@@ -42,6 +42,8 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
   const view = one(sp.vista) || (statusParam && INVOICE_STATES.has(statusParam) ? "facturas" : "pedidos");
   const companyId = one(sp.cliente);
   const companyType = one(sp.tipo);
+  // Por defecto la facturación descuenta las notas crédito: es la venta real.
+  const grossOnly = one(sp.nc) === "sin";
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const now = new Date();
@@ -68,10 +70,14 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
     ...(companyType ? { company: { type: companyType } } : {}),
   };
 
-  const [billed, cart, chartInvoices, companies, orderStats] = await Promise.all([
+  const [billed, credited, cart, chartInvoices, chartCredits, companies, orderStats] = await Promise.all([
     prisma.invoice.aggregate({ where: { ...byCompany, issueDate: dateRange(periodFrom, periodTo), status: NOT_VOID }, _sum: { net: true }, _count: true }),
+    prisma.creditNote.aggregate({ where: { ...byCompany, issueDate: dateRange(periodFrom, periodTo) }, _sum: { net: true }, _count: true }),
     receivables(byCompany),
     prisma.invoice.findMany({ where: { ...byCompany, issueDate: { gte: chartFrom, lt: chartTo }, status: NOT_VOID }, select: { issueDate: true, net: true } }),
+    grossOnly
+      ? Promise.resolve([])
+      : prisma.creditNote.findMany({ where: { ...byCompany, issueDate: { gte: chartFrom, lt: chartTo } }, select: { issueDate: true, net: true } }),
     prisma.company.findMany({ where: { active: true, ...(companyType ? { type: companyType } : {}) }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.salesOrder.aggregate({ where: { ...byCompany, date: dateRange(periodFrom, periodTo), status: NOT_VOID }, _count: true, _sum: { net: true } }),
   ]);
@@ -81,6 +87,14 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
     const key = buckets.keyOf(i.issueDate);
     byBucket.set(key, (byBucket.get(key) ?? 0) + i.net);
   }
+  // El gráfico no dibuja bajo cero: un día con sólo notas crédito queda en la base.
+  for (const n of chartCredits) {
+    const key = buckets.keyOf(n.issueDate);
+    byBucket.set(key, (byBucket.get(key) ?? 0) - n.net);
+  }
+
+  const creditTotal = credited._sum.net ?? 0;
+  const billedTotal = (billed._sum.net ?? 0) - (grossOnly ? 0 : creditTotal);
 
   const avgTicket = orderStats._count ? (orderStats._sum.net ?? 0) / orderStats._count : 0;
   const periodWord = hasRange ? "período" : "mes";
@@ -95,8 +109,12 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
     ...(hasRange ? { issueDate: dateRange(fromDay, rangeEnd) } : {}),
     ...(statusParam && INVOICE_STATES.has(statusParam) ? { status: statusParam } : {}),
   };
+  const creditWhere = {
+    ...byCompany,
+    ...(hasRange ? { issueDate: dateRange(fromDay, rangeEnd) } : {}),
+  };
 
-  const [orders, orderCount, invoiceRows, invoiceCount] = await Promise.all([
+  const [orders, orderCount, invoiceRows, invoiceCount, creditRows, creditCount] = await Promise.all([
     view === "pedidos"
       ? prisma.salesOrder.findMany({
           where: orderWhere,
@@ -117,14 +135,24 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
         })
       : Promise.resolve([]),
     view === "facturas" ? prisma.invoice.count({ where: invoiceWhere }) : Promise.resolve(0),
+    view === "notas"
+      ? prisma.creditNote.findMany({
+          where: creditWhere,
+          orderBy: { issueDate: "desc" },
+          skip,
+          take,
+          include: { company: { select: { id: true, name: true } }, invoice: { select: { number: true } } },
+        })
+      : Promise.resolve([]),
+    view === "notas" ? prisma.creditNote.count({ where: creditWhere }) : Promise.resolve(0),
   ]);
 
-  const total = view === "pedidos" ? orderCount : invoiceCount;
+  const total = view === "pedidos" ? orderCount : view === "notas" ? creditCount : invoiceCount;
   const tab = (key: string, label: string) => {
     const q = new URLSearchParams();
     q.set("vista", key);
     // Al cambiar de vista se conservan cliente, tipo y fechas; el estado no aplica.
-    for (const k of ["cliente", "tipo", "desde", "hasta"]) if (one(sp[k])) q.set(k, one(sp[k]));
+    for (const k of ["cliente", "tipo", "desde", "hasta", "nc"]) if (one(sp[k])) q.set(k, one(sp[k]));
     return (
       <Link
         key={key}
@@ -144,7 +172,12 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label={`Facturado en el ${periodWord}`} value={fmtCompact(billed._sum.net ?? 0)} hint={`${fmtNumber(billed._count)} facturas emitidas`} icon={<IconSales size={15} />} />
+        <StatTile label={`Facturado en el ${periodWord}`} value={fmtCompact(billedTotal)}
+          hint={
+            credited._count
+              ? `${fmtNumber(billed._count)} facturas · ${grossOnly ? "sin descontar" : "menos"} ${fmtCompact(creditTotal)} en notas crédito`
+              : `${fmtNumber(billed._count)} facturas emitidas`
+          } icon={<IconSales size={15} />} />
         <StatTile label={`Pedidos del ${periodWord}`} value={fmtNumber(orderStats._count)} hint={`Ticket medio ${fmtCompact(avgTicket)}`} icon={<IconTarget size={15} />} />
         <StatTile label="Por cobrar" value={fmtCompact(cart.open)} hint={`${fmtNumber(cart.count)} facturas pendientes`} icon={<IconSales size={15} />} />
         <StatTile label="Cartera vencida" value={fmtCompact(cart.overdue)} hint={`${((cart.overdue / Math.max(1, cart.open)) * 100).toFixed(0)}% de lo pendiente`} icon={<IconAlert size={15} />} href="/ventas?estado=VENCIDA" />
@@ -157,8 +190,8 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
         />
         <div className="px-4 py-4">
           <LineChart
-            data={buckets.list.map((b) => ({ label: b.label, values: [Math.round(byBucket.get(b.key) ?? 0)] }))}
-            series={[{ name: "Facturación emitida", color: "var(--series-1)" }]}
+            data={buckets.list.map((b) => ({ label: b.label, values: [Math.max(0, Math.round(byBucket.get(b.key) ?? 0))] }))}
+            series={[{ name: grossOnly ? "Facturación emitida" : "Facturación menos notas crédito", color: "var(--series-1)" }]}
             format="compact"
             height={220}
             labelEvery={Math.max(1, Math.ceil(buckets.list.length / 14))}
@@ -169,6 +202,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
       <div className="mt-5 flex flex-wrap items-center gap-2">
         {tab("pedidos", "Pedidos")}
         {tab("facturas", "Facturación")}
+        {tab("notas", "Notas crédito")}
       </div>
 
       <div className="mt-3">
@@ -185,10 +219,21 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
             { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-60" },
             {
               type: "select",
-              name: "estado",
-              label: "Estado",
-              options: (view === "pedidos" ? ORDER_STATUS.options : INVOICE_STATUS.options).map((o) => ({ value: o.value, label: o.label })),
+              name: "nc",
+              label: "Descontando notas crédito",
+              options: [{ value: "sin", label: "Sin descontar notas crédito" }],
             },
+            // Las notas crédito no tienen estado.
+            ...(view === "notas"
+              ? []
+              : [
+                  {
+                    type: "select" as const,
+                    name: "estado",
+                    label: "Estado",
+                    options: (view === "pedidos" ? ORDER_STATUS.options : INVOICE_STATUS.options).map((o) => ({ value: o.value, label: o.label })),
+                  },
+                ]),
           ]}
         />
 
@@ -230,6 +275,37 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                           <td className="num text-[var(--text-secondary)]">{o.discount > 0 ? fmtMoney(o.discount) : "—"}</td>
                           <td className="num font-semibold">{fmtMoney(o.net)}</td>
                           <td className="font-mono text-[11.5px] text-[var(--text-secondary)]">{o.invoice?.number ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : view === "notas" ? (
+                  <table className="tbl">
+                    <thead>
+                      <tr>
+                        <th>Nota crédito</th>
+                        <th>Emisión</th>
+                        <th>Cliente</th>
+                        <th>Factura afectada</th>
+                        <th>Motivo</th>
+                        <th className="num">Sin IVA</th>
+                        <th className="num">Con IVA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {creditRows.map((n) => (
+                        <tr key={n.id}>
+                          <td className="font-mono text-[12px] font-medium">{n.number}</td>
+                          <td className="whitespace-nowrap text-[var(--text-secondary)]">{fmtDate(n.issueDate)}</td>
+                          <td>
+                            <Link href={`/clientes/${n.company.id}`} className="hover:text-[var(--brand)] hover:underline">
+                              {n.company.name}
+                            </Link>
+                          </td>
+                          <td className="font-mono text-[11.5px] text-[var(--text-secondary)]">{n.invoice?.number ?? "—"}</td>
+                          <td className="max-w-[280px] truncate text-[var(--text-secondary)]" title={n.reason ?? undefined}>{n.reason ?? "—"}</td>
+                          <td className="num font-semibold">{fmtMoney(n.net)}</td>
+                          <td className="num text-[var(--text-secondary)]">{fmtMoney(n.total)}</td>
                         </tr>
                       ))}
                     </tbody>

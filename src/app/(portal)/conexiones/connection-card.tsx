@@ -381,7 +381,11 @@ function SyncButton({ hint, disabled }: { hint: string; disabled: boolean }) {
           continue;
         }
         if (b.done) break;
-        setProgress(`Página ${b.page} de ${b.pages} · ${b.nuevas} nuevas, ${b.actualizadas} actualizadas`);
+        setProgress(
+          b.fase === "NOTAS"
+            ? `Notas crédito: página ${b.page} de ${b.pages} · ${b.notas} nuevas`
+            : `Facturas: página ${b.page} de ${b.pages} · ${b.nuevas} nuevas, ${b.actualizadas} actualizadas`,
+        );
       }
     } catch {
       setError("Se cortó la comunicación con el portal. Vuelve a sincronizar: sigue donde iba.");
