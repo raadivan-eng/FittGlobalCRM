@@ -15,3 +15,11 @@ export function pageCount(total: number, pageSize: number) {
 export function flatten(sp: Record<string, string | string[] | undefined>) {
   return Object.fromEntries(Object.entries(sp).map(([k, v]) => [k, one(v)]));
 }
+
+/** Lee un día `YYYY-MM-DD` de la URL como medianoche local; `null` si no es válido. */
+export function parseDay(raw: string | string[] | undefined) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(one(raw));
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}

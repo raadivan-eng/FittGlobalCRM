@@ -6,7 +6,8 @@ import { IconSearch, IconX } from "./icons";
 
 export type FilterField =
   | { type: "search"; name: string; placeholder?: string; width?: string }
-  | { type: "select"; name: string; label: string; options: { value: string; label: string }[]; width?: string };
+  | { type: "select"; name: string; label: string; options: { value: string; label: string }[]; width?: string }
+  | { type: "date"; name: string; label: string };
 
 /**
  * Barra de filtros sincronizada con la URL: el estado vive en la query string,
@@ -31,7 +32,17 @@ export function Filters({ fields, extra }: { fields: FilterField[]; extra?: Reac
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
       {fields.map((f) =>
-        f.type === "search" ? (
+        f.type === "date" ? (
+          <label key={f.name} className="flex items-center gap-1.5 text-[12.5px] text-[var(--text-muted)]">
+            {f.label}
+            <input
+              type="date"
+              className="field w-auto"
+              value={params.get(f.name) ?? ""}
+              onChange={(e) => apply(f.name, e.target.value)}
+            />
+          </label>
+        ) : f.type === "search" ? (
           <SearchInput
             key={f.name}
             value={params.get(f.name) ?? ""}

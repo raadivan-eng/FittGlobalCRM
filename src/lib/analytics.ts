@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { EXPIRY_BANDS, LEAD_OPEN, type ExpiryBandKey } from "./enums";
 
@@ -419,9 +420,9 @@ export async function coverage(from: Date, to: Date) {
 
 /* ────────────────────────────────  Cartera  ────────────────────────────── */
 
-export async function receivables() {
+export async function receivables(where: Prisma.InvoiceWhereInput = {}) {
   const rows = await prisma.invoice.findMany({
-    where: { status: { in: ["EMITIDA", "PARCIAL", "VENCIDA"] } },
+    where: { ...where, status: { in: ["EMITIDA", "PARCIAL", "VENCIDA"] } },
     select: { total: true, paidAmount: true, dueDate: true, status: true },
   });
   const today = new Date();

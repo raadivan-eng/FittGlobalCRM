@@ -217,6 +217,10 @@ export function GroupedBarChart({
 
 /* ─────────────────────────────  Línea / área  ───────────────────────────── */
 
+// El color suele venir como `var(--series-1)`: los paréntesis rompen `url(#…)`
+// y el área se pintaba negra. El id sólo admite caracteres seguros.
+const gradId = (i: number, color: string) => `grad-${i}-${color.replace(/[^a-z0-9-]/gi, "")}`;
+
 export function LineChart({
   data,
   series,
@@ -279,7 +283,7 @@ export function LineChart({
         <svg width={width} height={height} role="img" aria-label={series.map((s) => s.name).join(" y ")}>
           <defs>
             {series.map((s, i) => (
-              <linearGradient key={i} id={`grad-${i}-${s.color.replace("#", "")}`} x1="0" x2="0" y1="0" y2="1">
+              <linearGradient key={i} id={gradId(i, s.color)} x1="0" x2="0" y1="0" y2="1">
                 <stop offset="0%" stopColor={s.color} stopOpacity={0.22} />
                 <stop offset="100%" stopColor={s.color} stopOpacity={0.02} />
               </linearGradient>
@@ -298,7 +302,7 @@ export function LineChart({
             );
           })}
 
-          {area && series.length === 1 && <path d={paths[0].area} fill={`url(#grad-0-${series[0].color.replace("#", "")})`} />}
+          {area && series.length === 1 && <path d={paths[0].area} fill={`url(#${gradId(0, series[0].color)})`} />}
           {paths.map((p, i) => (
             <path key={i} d={p.line} fill="none" stroke={series[i].color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
           ))}

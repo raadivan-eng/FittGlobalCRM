@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { billedBetween, lastMonths, NOT_VOID, periodKey, receivables, startOfMonth } from "@/lib/analytics";
-import { INVOICE_STATUS, ORDER_STATUS } from "@/lib/enums";
-import { fmtCompact, fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { NOT_VOID, periodKey, periodShort, receivables, startOfMonth } from "@/lib/analytics";
+import { COMPANY_TYPES, INVOICE_STATUS, ORDER_STATUS } from "@/lib/enums";
+import { fmtCompact, fmtDate, fmtDateShort, fmtMoney, fmtNumber } from "@/lib/format";
+import { flatten, one, pageCount, pagination, parseDay, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { LineChart } from "@/components/charts";
 import { Pagination } from "@/components/pagination";
@@ -16,6 +16,24 @@ export const dynamic = "force-dynamic";
 
 const INVOICE_STATES = new Set(INVOICE_STATUS.values as string[]);
 
+const dayKey = (d: Date) => `${periodKey(d)}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** Cubetas del gráfico: por día si el rango cabe en dos meses, si no por mes. */
+function chartBuckets(from: Date, to: Date) {
+  const daily = to.getTime() - from.getTime() <= 62 * 86_400_000;
+  const list: { key: string; label: string }[] = [];
+  if (daily) {
+    for (let d = new Date(from); d < to; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) {
+      list.push({ key: dayKey(d), label: fmtDateShort(d) });
+    }
+  } else {
+    for (let d = startOfMonth(0, from); d < to; d = startOfMonth(1, d)) {
+      list.push({ key: periodKey(d), label: periodShort(d) });
+    }
+  }
+  return { daily, list, keyOf: daily ? dayKey : periodKey };
+}
+
 export default async function VentasPage({ searchParams }: { searchParams: SearchParams }) {
   await requireSection("ventas");
   const sp = await searchParams;
@@ -23,32 +41,58 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
   // Un estado de factura en la URL (p. ej. desde el panel) abre directamente esa vista.
   const view = one(sp.vista) || (statusParam && INVOICE_STATES.has(statusParam) ? "facturas" : "pedidos");
   const companyId = one(sp.cliente);
+  const companyType = one(sp.tipo);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const now = new Date();
   const monthStart = startOfMonth(0, now);
   const nextMonth = startOfMonth(1, now);
-  const range = lastMonths(12, now);
 
-  const [mtd, cart, invoices12, companies, orderStats] = await Promise.all([
-    billedBetween(monthStart, nextMonth),
-    receivables(),
-    prisma.invoice.findMany({ where: { issueDate: { gte: range[0].start }, status: NOT_VOID }, select: { issueDate: true, net: true } }),
-    prisma.company.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
-    prisma.salesOrder.aggregate({ where: { date: { gte: monthStart, lt: nextMonth }, status: NOT_VOID }, _count: true, _sum: { net: true } }),
+  // Rango de fechas: `hasta` es inclusivo en la URL y exclusivo en las consultas.
+  let fromDay = parseDay(sp.desde);
+  let toDay = parseDay(sp.hasta);
+  if (fromDay && toDay && fromDay > toDay) [fromDay, toDay] = [toDay, fromDay];
+  const hasRange = Boolean(fromDay || toDay);
+  const rangeEnd = toDay ? new Date(toDay.getFullYear(), toDay.getMonth(), toDay.getDate() + 1) : null;
+
+  // Sin rango, las tarjetas miran el mes en curso y el gráfico los últimos doce meses.
+  const periodFrom = hasRange ? fromDay : monthStart;
+  const periodTo = hasRange ? rangeEnd : nextMonth;
+  const chartFrom = fromDay ?? startOfMonth(-11, toDay ?? now);
+  const chartTo = rangeEnd ?? nextMonth;
+  const buckets = chartBuckets(chartFrom, chartTo);
+
+  const dateRange = (from: Date | null, to: Date | null) => ({ ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) });
+  const byCompany = {
+    ...(companyId ? { companyId } : {}),
+    ...(companyType ? { company: { type: companyType } } : {}),
+  };
+
+  const [billed, cart, chartInvoices, companies, orderStats] = await Promise.all([
+    prisma.invoice.aggregate({ where: { ...byCompany, issueDate: dateRange(periodFrom, periodTo), status: NOT_VOID }, _sum: { net: true }, _count: true }),
+    receivables(byCompany),
+    prisma.invoice.findMany({ where: { ...byCompany, issueDate: { gte: chartFrom, lt: chartTo }, status: NOT_VOID }, select: { issueDate: true, net: true } }),
+    prisma.company.findMany({ where: { active: true, ...(companyType ? { type: companyType } : {}) }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.salesOrder.aggregate({ where: { ...byCompany, date: dateRange(periodFrom, periodTo), status: NOT_VOID }, _count: true, _sum: { net: true } }),
   ]);
 
-  const byPeriod = new Map<string, number>();
-  for (const i of invoices12) byPeriod.set(periodKey(i.issueDate), (byPeriod.get(periodKey(i.issueDate)) ?? 0) + i.net);
+  const byBucket = new Map<string, number>();
+  for (const i of chartInvoices) {
+    const key = buckets.keyOf(i.issueDate);
+    byBucket.set(key, (byBucket.get(key) ?? 0) + i.net);
+  }
 
   const avgTicket = orderStats._count ? (orderStats._sum.net ?? 0) / orderStats._count : 0;
+  const periodWord = hasRange ? "período" : "mes";
 
   const orderWhere = {
-    ...(companyId ? { companyId } : {}),
+    ...byCompany,
+    ...(hasRange ? { date: dateRange(fromDay, rangeEnd) } : {}),
     ...(statusParam && !INVOICE_STATES.has(statusParam) ? { status: statusParam } : {}),
   };
   const invoiceWhere = {
-    ...(companyId ? { companyId } : {}),
+    ...byCompany,
+    ...(hasRange ? { issueDate: dateRange(fromDay, rangeEnd) } : {}),
     ...(statusParam && INVOICE_STATES.has(statusParam) ? { status: statusParam } : {}),
   };
 
@@ -79,7 +123,8 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
   const tab = (key: string, label: string) => {
     const q = new URLSearchParams();
     q.set("vista", key);
-    if (companyId) q.set("cliente", companyId);
+    // Al cambiar de vista se conservan cliente, tipo y fechas; el estado no aplica.
+    for (const k of ["cliente", "tipo", "desde", "hasta"]) if (one(sp[k])) q.set(k, one(sp[k]));
     return (
       <Link
         key={key}
@@ -99,20 +144,24 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Facturado en el mes" value={fmtCompact(mtd.total)} hint={`${fmtNumber(mtd.count)} facturas emitidas`} icon={<IconSales size={15} />} />
-        <StatTile label="Pedidos del mes" value={fmtNumber(orderStats._count)} hint={`Ticket medio ${fmtCompact(avgTicket)}`} icon={<IconTarget size={15} />} />
+        <StatTile label={`Facturado en el ${periodWord}`} value={fmtCompact(billed._sum.net ?? 0)} hint={`${fmtNumber(billed._count)} facturas emitidas`} icon={<IconSales size={15} />} />
+        <StatTile label={`Pedidos del ${periodWord}`} value={fmtNumber(orderStats._count)} hint={`Ticket medio ${fmtCompact(avgTicket)}`} icon={<IconTarget size={15} />} />
         <StatTile label="Por cobrar" value={fmtCompact(cart.open)} hint={`${fmtNumber(cart.count)} facturas pendientes`} icon={<IconSales size={15} />} />
         <StatTile label="Cartera vencida" value={fmtCompact(cart.overdue)} hint={`${((cart.overdue / Math.max(1, cart.open)) * 100).toFixed(0)}% de lo pendiente`} icon={<IconAlert size={15} />} href="/ventas?estado=VENCIDA" />
       </div>
 
       <Card className="mt-5">
-        <CardHeader title="Facturación mensual" subtitle="Últimos doce meses" />
+        <CardHeader
+          title={buckets.daily ? "Facturación diaria" : "Facturación mensual"}
+          subtitle={hasRange ? `${fmtDate(chartFrom)} – ${fmtDate(new Date(chartTo.getTime() - 86_400_000))}` : "Últimos doce meses"}
+        />
         <div className="px-4 py-4">
           <LineChart
-            data={range.map((r) => ({ label: r.label, values: [Math.round(byPeriod.get(r.period) ?? 0)] }))}
+            data={buckets.list.map((b) => ({ label: b.label, values: [Math.round(byBucket.get(b.key) ?? 0)] }))}
             series={[{ name: "Facturación emitida", color: "var(--series-1)" }]}
             format="compact"
             height={220}
+            labelEvery={Math.max(1, Math.ceil(buckets.list.length / 14))}
           />
         </div>
       </Card>
@@ -125,6 +174,14 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
       <div className="mt-3">
         <Filters
           fields={[
+            { type: "date", name: "desde", label: "Desde" },
+            { type: "date", name: "hasta", label: "Hasta" },
+            {
+              type: "select",
+              name: "tipo",
+              label: "Tipo de cliente",
+              options: COMPANY_TYPES.options.map((o) => ({ value: o.value, label: o.label })),
+            },
             { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-60" },
             {
               type: "select",
