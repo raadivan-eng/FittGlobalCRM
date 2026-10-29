@@ -97,7 +97,7 @@ export async function crearActividad(_prev: TradeFormState, fd: FormData): Promi
     where: { companyId, active: true, ...(cities.length ? { city: { in: cities } } : {}) },
     select: { id: true },
   });
-  if (!stores.length) return { error: "El cliente no tiene tiendas activas en las ciudades elegidas." };
+  if (!stores.length && cities.length) return { error: "El cliente no tiene tiendas activas en las ciudades elegidas." };
 
   let id = "";
   for (let intento = 0; intento < 5 && !id; intento++) {

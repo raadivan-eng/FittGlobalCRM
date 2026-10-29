@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { EXPIRY_BANDS, LEAD_OPEN, type ExpiryBandKey } from "./enums";
+import { criteriaWindow, DEFAULT_CRITERIA, normalizeCriteria, project, shiftPeriod, type ForecastCriteria } from "./forecast-criteria";
 
 export const NOT_VOID = { not: "ANULADA" as const };
 
@@ -39,47 +40,44 @@ export async function billedBetween(from: Date, to: Date, companyId?: string) {
 
 /* ───────────────────────────────  Forecast  ────────────────────────────── */
 
+/** El criterio guardado; sin fila rige el de siempre (promedio del año vigente). */
+export async function getForecastCriteria(): Promise<ForecastCriteria> {
+  const row = await prisma.forecastCriteria.findUnique({ where: { id: "default" } });
+  return row ? normalizeCriteria(row) : DEFAULT_CRITERIA;
+}
+
 export type CompanyForecast = {
-  /** Lo que se compara contra lo real: el manual si existe, si no el promedio. */
+  /** Lo que se compara contra lo real: el manual si existe, si no lo que proyecta el criterio. */
   amount: number;
   source: "MANUAL" | "PROMEDIO";
-  /** Promedio histórico, aunque haya un manual encima. 0 si no hay historia. */
+  /** Proyección del criterio, aunque haya un manual encima. 0 si no hay historia. */
   baseline: number;
-  /** Meses que entraron al promedio. */
+  /** Meses que entraron a la base. */
   months: number;
-  /** Cada mes de la ventana con lo facturado y si quedó fuera del promedio. */
+  /** Esos meses, para repartir el forecast entre productos con la misma mezcla. */
+  span: string[];
+  /** La base salió del mismo mes del año anterior. */
+  seasonal: boolean;
+  /** Sin compras recientes: el criterio lo proyecta en 0. */
+  dormant: boolean;
+  /** Cada mes de la ventana con lo facturado y si quedó fuera de la base. */
   history: { period: string; amount: number; excluded: "TODOS" | "CLIENTE" | null }[];
 };
 
-function periodStart(period: string) {
-  const [y, m] = period.split("-").map(Number);
-  return new Date(y, m - 1, 1);
-}
-
-/**
- * Meses que alimentan el promedio de un período: los meses cerrados del año
- * vigente anteriores a él. El año vigente es el del mes previo al período, para
- * que enero se proyecte con el año que acaba de cerrar y no se quede sin base.
- */
-export function baselineWindow(period: string, now = new Date()) {
-  const start = periodStart(period);
-  const from = new Date(new Date(start.getFullYear(), start.getMonth() - 1, 1).getFullYear(), 0, 1);
-  const current = startOfMonth(0, now);
-  const to = start < current ? start : current;
-  const periods: string[] = [];
-  for (let d = from; d < to; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) periods.push(periodKey(d));
-  return { from, to, periods };
-}
-
 /**
  * Forecast por cliente para cada período pedido. Sin carga manual, la meta es
- * la facturación media de los meses del año vigente, contada desde el primer
- * mes en que el cliente compró: un cliente que entró en junio no se diluye
- * entre los meses en que todavía no existía. Los meses marcados como
- * extraordinarios (ForecastExclusion) salen de la suma y del conteo.
+ * lo que proyecta el criterio (forecast-criteria.ts) sobre lo facturado en su
+ * ventana. Los meses marcados como extraordinarios (ForecastExclusion) salen
+ * de la suma y del conteo. Con `manual: false` se ignoran las cargas a mano:
+ * así se mide qué tan bien habría acertado el criterio solo.
  */
-export async function companyForecasts(periods: string[], companyId?: string) {
-  const windows = periods.map((p) => ({ period: p, ...baselineWindow(p) })).filter((w) => w.periods.length > 0);
+export async function companyForecasts(
+  periods: string[],
+  companyId?: string,
+  opts: { criteria?: ForecastCriteria; manual?: boolean } = {},
+) {
+  const criteria = opts.criteria ?? (await getForecastCriteria());
+  const windows = periods.map((p) => ({ period: p, ...criteriaWindow(p, criteria) })).filter((w) => w.periods.length > 0);
   const from = windows.length ? new Date(Math.min(...windows.map((w) => w.from.getTime()))) : null;
   const to = windows.length ? new Date(Math.max(...windows.map((w) => w.to.getTime()))) : null;
 
@@ -97,10 +95,12 @@ export async function companyForecasts(periods: string[], companyId?: string) {
           select: { companyId: true, issueDate: true, net: true },
         })
       : [],
-    prisma.forecast.findMany({
-      where: { period: { in: periods }, productId: null, ...(companyId ? { companyId } : { companyId: { not: null } }) },
-      select: { period: true, companyId: true, amount: true },
-    }),
+    opts.manual === false
+      ? []
+      : prisma.forecast.findMany({
+          where: { period: { in: periods }, productId: null, ...(companyId ? { companyId } : { companyId: { not: null } }) },
+          select: { period: true, companyId: true, amount: true },
+        }),
     prisma.forecastExclusion.findMany({
       where: {
         period: { in: windowPeriods },
@@ -133,11 +133,8 @@ export async function companyForecasts(periods: string[], companyId?: string) {
       if (!history.some((h) => h.amount > 0)) continue;
       // Un cliente con todo excluido se queda en 0, pero conserva su historia
       // para poder deshacer el ajuste desde la pantalla.
-      const counted = history.filter((h) => !h.excluded);
-      const first = counted.findIndex((h) => h.amount > 0);
-      const span = first < 0 ? [] : counted.slice(first);
-      const baseline = span.length ? Math.round(span.reduce((s, h) => s + h.amount, 0) / span.length) : 0;
-      out.set(id, { amount: baseline, source: "PROMEDIO", baseline, months: span.length, history });
+      const p = project(history, w.period, criteria);
+      out.set(id, { amount: p.value, source: "PROMEDIO", baseline: p.value, months: p.months, span: p.span, seasonal: p.seasonal, dormant: p.dormant, history });
     }
   }
   for (const f of manual) {
@@ -148,6 +145,9 @@ export async function companyForecasts(periods: string[], companyId?: string) {
       source: "MANUAL",
       baseline: auto?.baseline ?? 0,
       months: auto?.months ?? 0,
+      span: auto?.span ?? [],
+      seasonal: auto?.seasonal ?? false,
+      dormant: auto?.dormant ?? false,
       history: auto?.history ?? [],
     });
   }
@@ -166,48 +166,82 @@ export type LeadForecast = {
   name: string;
   source: string;
   status: string;
+  temperature: string;
+  closePeriod: string;
+  /** Lo que suma al mes: el valor esperado por el porcentaje de su temperatura. */
   amount: number;
+  /** Valor esperado completo del lead. */
+  expected: number;
   owner: string | null;
 };
 
 /**
- * Lo que aportan los leads al forecast: cada lead CALIENTE, todavía abierto,
- * con mes tentativo de cierre y valor suma ese valor a su mes. Al ganarse deja
- * de contar aquí porque el valor pasa a ser forecast manual del cliente nuevo.
+ * Lo que aportan los leads al forecast: cada lead abierto con mes tentativo de
+ * cierre y valor suma, según el criterio, un porcentaje de ese valor (uno para
+ * los calientes, otro para los tibios) a su mes de cierre y a los siguientes
+ * si el negocio nuevo aporta varios meses. Al ganarse deja de contar aquí
+ * porque el valor pasa a ser forecast manual del cliente nuevo.
  */
-export async function leadForecasts(periods: string[]) {
+export async function leadForecasts(periods: string[], criteria?: ForecastCriteria) {
+  const c = criteria ?? (await getForecastCriteria());
+  const result = new Map<string, { total: number; leads: LeadForecast[] }>(periods.map((p) => [p, { total: 0, leads: [] }]));
+  const pct: Record<string, number> = { CALIENTE: c.hotLeadPct, TIBIO: c.warmLeadPct };
+  const temperatures = Object.keys(pct).filter((t) => pct[t] > 0);
+  if (!temperatures.length || !periods.length) return result;
+
+  // Un lead que cerró unos meses antes todavía aporta si el negocio dura varios meses.
+  const closing = [...new Set(periods.flatMap((p) => Array.from({ length: c.leadMonths }, (_, i) => shiftPeriod(p, -i))))];
   const leads = await prisma.lead.findMany({
     where: {
-      temperature: "CALIENTE",
+      temperature: { in: temperatures },
       status: { in: [...LEAD_OPEN] },
-      closePeriod: { in: periods },
+      closePeriod: { in: closing },
       expectedValue: { gt: 0 },
     },
     orderBy: { expectedValue: "desc" },
-    select: { id: true, code: true, name: true, source: true, status: true, closePeriod: true, expectedValue: true, owner: { select: { name: true } } },
+    select: { id: true, code: true, name: true, source: true, status: true, temperature: true, closePeriod: true, expectedValue: true, owner: { select: { name: true } } },
   });
-  const result = new Map<string, { total: number; leads: LeadForecast[] }>(periods.map((p) => [p, { total: 0, leads: [] }]));
   for (const l of leads) {
-    const bucket = result.get(l.closePeriod!)!;
-    bucket.total += l.expectedValue!;
-    bucket.leads.push({ id: l.id, code: l.code, name: l.name, source: l.source, status: l.status, amount: l.expectedValue!, owner: l.owner?.name ?? null });
+    const amount = (l.expectedValue! * pct[l.temperature]) / 100;
+    for (let i = 0; i < c.leadMonths; i++) {
+      const bucket = result.get(shiftPeriod(l.closePeriod!, i));
+      if (!bucket) continue;
+      bucket.total += amount;
+      bucket.leads.push({
+        id: l.id,
+        code: l.code,
+        name: l.name,
+        source: l.source,
+        status: l.status,
+        temperature: l.temperature,
+        closePeriod: l.closePeriod!,
+        amount,
+        expected: l.expectedValue!,
+        owner: l.owner?.name ?? null,
+      });
+    }
   }
+  for (const bucket of result.values()) bucket.leads.sort((a, b) => b.amount - a.amount);
   return result;
 }
 
-/** Serie mensual de facturación real y forecast (clientes más leads calientes), en la misma escala. */
+/**
+ * Serie mensual de facturación real y forecast en la misma escala. El forecast
+ * suma clientes, leads y los nuevos negocios sin identificar del criterio.
+ */
 export async function forecastVsBilling(months = 12) {
   const range = lastMonths(months);
   const from = range[0].start;
   const to = range[range.length - 1].end;
+  const criteria = await getForecastCriteria();
 
   const [invoices, forecasts, leads] = await Promise.all([
     prisma.invoice.findMany({
       where: { issueDate: { gte: from, lt: to }, status: NOT_VOID },
       select: { issueDate: true, net: true },
     }),
-    companyForecasts(range.map((r) => r.period)),
-    leadForecasts(range.map((r) => r.period)),
+    companyForecasts(range.map((r) => r.period), undefined, { criteria }),
+    leadForecasts(range.map((r) => r.period), criteria),
   ]);
 
   const realByPeriod = new Map<string, number>();
@@ -216,7 +250,7 @@ export async function forecastVsBilling(months = 12) {
     realByPeriod.set(k, (realByPeriod.get(k) ?? 0) + inv.net);
   }
   const fcByPeriod = new Map(
-    range.map((r) => [r.period, sumForecasts(forecasts.get(r.period)) + (leads.get(r.period)?.total ?? 0)]),
+    range.map((r) => [r.period, sumForecasts(forecasts.get(r.period)) + (leads.get(r.period)?.total ?? 0) + criteria.newBusiness]),
   );
 
   return range.map((r) => ({

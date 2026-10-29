@@ -32,6 +32,11 @@ model User {
   accounts           Company[]            @relation("AccountOwner")
   forecasts          Forecast[]
   forecastExclusions ForecastExclusion[]
+  budgetsUpdated     ClientBudget[]
+  budgetLines        BudgetLine[]
+  budgetSharesSet    ClientShare[]
+  budgetSettings     BudgetSettings[]
+  forecastCriteria   ForecastCriteria[]
   orders             SalesOrder[]
   connectionEvents   ApiConnectionEvent[]
   shipments          Shipment[]
@@ -89,6 +94,8 @@ model Company {
   creditNotes        CreditNote[]
   forecasts          Forecast[]
   forecastExclusions ForecastExclusion[]
+  budgets            ClientBudget[]
+  budgetShares       ClientShare[]
   shipments          Shipment[]
   finds              StoreCandidate[]
   searches           LocatorSearch[]
@@ -536,6 +543,121 @@ model ForecastExclusion {
   createdBy User     @relation(fields: [createdById], references: [id])
 
   @@index([period])
+}
+
+/// Criterio con que se proyecta el forecast automático de cada cliente y lo
+/// que suman los nuevos negocios. Hay una sola fila («default»); sin ella rige
+/// DEFAULT_CRITERIA de src/lib/forecast-criteria.ts, que reproduce el promedio
+/// del año vigente. El método es un catálogo (FORECAST_METHODS).
+model ForecastCriteria {
+  id                String   @id @default("default")
+  method            String   @default("ANIO_VIGENTE") // ANIO_VIGENTE | MOVIL | PONDERADO | ESTACIONAL
+  windowMonths      Int      @default(6)
+  fromFirstPurchase Boolean  @default(true)
+  growthPct         Float    @default(0)
+  capOutliers       Boolean  @default(false)
+  outlierFactor     Float    @default(1.5)
+  dormantMonths     Int      @default(0) // 0: nunca se da por inactivo
+  hotLeadPct        Float    @default(100)
+  warmLeadPct       Float    @default(0)
+  leadMonths        Int      @default(1)
+  newBusiness       Float    @default(0) // monto mensual de negocios aún sin identificar
+  updatedById       String?
+  updatedAt         DateTime @updatedAt
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+/// Presupuesto de resultados de un cliente para un mes. A diferencia del
+/// forecast, que se mueve con el promedio, se fija al planear el año y no se
+/// recalcula: es la vara contra la que se mide lo que dejó cada cuenta.
+/// El margen va en porcentaje porque así se negocia; fletes y trade, en plata.
+model ClientBudget {
+  id          String   @id @default(cuid())
+  period      String // "2026-01"
+  companyId   String
+  sales       Float // venta neta sin IVA
+  marginPct   Float // margen bruto sobre la venta neta
+  freight     Float    @default(0)
+  trade       Float    @default(0)
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  updatedBy User?   @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, period])
+  @@index([period])
+}
+
+/// Presupuesto general: una cuenta del estado de resultados en un mes, con el
+/// mismo signo del reporte contable (ingresos y gastos en positivo,
+/// devoluciones en negativo) para validarlo cuenta por cuenta contra él.
+model BudgetLine {
+  id          String   @id @default(cuid())
+  period      String // "2027-01"
+  accountCode String // código PUC: 41359503
+  accountName String
+  amount      Float
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([period, accountCode])
+  @@index([period])
+}
+
+/// Rubro del presupuesto: agrupa cuentas del PUC por prefijo y dice dónde cae
+/// en el estado de resultados (bloque) y cómo se mide en cada cliente (fuente).
+/// Sin filas rige DEFAULT_RUBROS de src/lib/budget-lines.ts. La clave no cambia
+/// después de creada porque las participaciones la guardan.
+model BudgetRubro {
+  key       String   @id
+  label     String
+  prefixes  String // separados por coma: "5105,5205"
+  block     String // INGRESOS | COSTO | COMERCIAL | OTROS_INGRESOS | OPERATIVO | FINANCIEROS | IMPUESTOS
+  source    String // VENTAS | COSTO | FLETES | TRADE | REPARTIDO
+  position  Int
+  updatedAt DateTime @updatedAt
+}
+
+/// Criterios del presupuesto. Una sola fila («default»); sin ella rige
+/// DEFAULT_SETTINGS de src/lib/budget-lines.ts.
+model BudgetSettings {
+  id                  String   @id @default("default")
+  allocation          String   @default("VENTAS") // VENTAS | GANANCIA_BRUTA | PAREJO
+  creditNotes         Boolean  @default(true)
+  referenceMonths     Int      @default(12)
+  spread              String   @default("ESTACIONAL") // ESTACIONAL | PAREJO
+  warnPct             Float    @default(90)
+  expenseTolerancePct Float    @default(110)
+  defaultPeriod       String   @default("ACUMULADO") // ACUMULADO | ANIO
+  updatedById         String?
+  updatedAt           DateTime @updatedAt
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+/// Participación de un cliente en el presupuesto general de un año, en
+/// porcentaje. La fila con rubro "" es la base —su peso en la venta— y rige en
+/// todos los rubros; una fila con la clave de un rubro (BudgetRubro) la
+/// reemplaza sólo en ese rubro. "" en vez de NULL
+/// porque SQLite trata los NULL como distintos en el índice único.
+model ClientShare {
+  id          String   @id @default(cuid())
+  year        Int
+  companyId   String
+  line        String   @default("")
+  pct         Float
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  updatedBy User?   @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([year, companyId, line])
+  @@index([year])
 }
 
 // ─────────────────────────────────  Leads  ─────────────────────────────────────

@@ -61,8 +61,16 @@ export const TIERS = catalog([
 
 /** De dónde sale el forecast de un cliente; no se guarda, se deriva al leer. */
 export const FORECAST_SOURCE = catalog([
-  { value: "PROMEDIO", label: "Promedio", tone: "neutral", hint: "Media mensual facturada en el año vigente" },
+  { value: "PROMEDIO", label: "Automático", tone: "neutral", hint: "Proyectado con el criterio de forecast vigente" },
   { value: "MANUAL", label: "Manual", tone: "purple", hint: "Monto cargado por el comercial" },
+] as const);
+
+/** Cómo se proyecta la base histórica de cada cliente (ForecastCriteria.method). */
+export const FORECAST_METHODS = catalog([
+  { value: "ANIO_VIGENTE", label: "Promedio del año vigente", tone: "neutral", hint: "Media de los meses cerrados del año. Enero se proyecta con el año que acaba de cerrar." },
+  { value: "MOVIL", label: "Promedio móvil", tone: "info", hint: "Media de los últimos N meses cerrados, sin importar el año. Reacciona más rápido a los cambios." },
+  { value: "PONDERADO", label: "Promedio ponderado", tone: "purple", hint: "Últimos N meses, con más peso a los recientes: el último cuenta N veces, el más viejo una." },
+  { value: "ESTACIONAL", label: "Mismo mes del año anterior", tone: "warning", hint: "Lo que el cliente compró ese mes hace un año. Si no compró o el mes está excluido, usa el promedio móvil." },
 ] as const);
 
 export const STORE_FORMATS = catalog([
@@ -195,9 +203,9 @@ export const LEAD_STATUS = catalog([
 
 export const LEAD_OPEN = ["NUEVO", "CONTACTADO", "CALIFICADO", "NEGOCIACION"] as const;
 
-/** Qué tan cerca está de comprar. Sólo los calientes suman al forecast. */
+/** Qué tan cerca está de comprar. Cuánto suma cada temperatura al forecast lo fija el criterio. */
 export const LEAD_TEMPERATURE = catalog([
-  { value: "CALIENTE", label: "Caliente", tone: "danger", hint: "Cierre probable: con mes y valor suma al forecast" },
+  { value: "CALIENTE", label: "Caliente", tone: "danger", hint: "Cierre probable: con mes y valor suma al forecast según el criterio" },
   { value: "TIBIO", label: "Tibio", tone: "warning", hint: "Interesado, sin fecha de compra" },
   { value: "FRIO", label: "Frío", tone: "info", hint: "Primer acercamiento o sin respuesta" },
 ] as const);

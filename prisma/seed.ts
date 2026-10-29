@@ -121,6 +121,12 @@ const INCIDENT_TEMPLATES = [
 async function main() {
   console.log("🧹 Limpiando base…");
   await prisma.$transaction([
+    prisma.forecastCriteria.deleteMany(),
+    prisma.clientShare.deleteMany(),
+    prisma.budgetRubro.deleteMany(),
+    prisma.budgetSettings.deleteMany(),
+    prisma.budgetLine.deleteMany(),
+    prisma.clientBudget.deleteMany(),
     prisma.incomeStatementLine.deleteMany(),
     prisma.savedView.deleteMany(),
     prisma.notification.deleteMany(),
@@ -1340,6 +1346,51 @@ async function main() {
   }
   await prisma.incomeStatementLine.createMany({ data: resultados });
   console.log(`📒 Estado de resultados de ${porMes.size} meses (${resultados.length} cuentas-mes)`);
+
+  // ── Presupuesto general y participación por cliente del año en curso ─────
+  // Cada cuenta toma el mismo mes calendario más reciente del estado de
+  // resultados sembrado, con algo de ambición. La participación de cada
+  // cliente orbita su peso real en la venta de los últimos doce meses; uno de
+  // cada nueve queda sin participación y a dos se les ajusta fletes y promoción.
+  const ultimoPorMes = new Map<string, Map<string, { name: string; amount: number }>>();
+  for (const r of [...resultados].sort((x, y) => x.period.localeCompare(y.period))) {
+    const mm = r.period.slice(5);
+    const cuentas = ultimoPorMes.get(`${mm}|${r.period.slice(0, 4)}`) ?? new Map();
+    cuentas.set(r.accountCode, { name: r.accountName, amount: r.amount });
+    ultimoPorMes.set(`${mm}|${r.period.slice(0, 4)}`, cuentas);
+  }
+  const lineasPresupuesto = [];
+  for (let month = 0; month < 12; month++) {
+    const mm = String(month + 1).padStart(2, "0");
+    const ref = ultimoPorMes.get(`${mm}|${TODAY.getFullYear()}`) ?? ultimoPorMes.get(`${mm}|${TODAY.getFullYear() - 1}`);
+    for (const [accountCode, c] of ref ?? []) {
+      const ambition = accountCode.startsWith("4") ? 1.06 + rnd() * 0.08 : 0.98 + rnd() * 0.08;
+      lineasPresupuesto.push({ period: `${TODAY.getFullYear()}-${mm}`, accountCode, accountName: c.name, amount: Math.round(c.amount * ambition), updatedById: admin.id });
+    }
+  }
+  await prisma.budgetLine.createMany({ data: lineasPresupuesto });
+
+  const pesoReal = companies.map((company) => {
+    let total = 0;
+    for (let offset = -12; offset < 0; offset++) total += companyPeriodReal.get(`${periodKey(new Date(TODAY.getFullYear(), TODAY.getMonth() + offset, 1))}|${company.id}`) ?? 0;
+    return total;
+  });
+  const ventaTotal = pesoReal.reduce((s, v) => s + v, 0) || 1;
+  // Las bases se normalizan al 95 %: queda espacio para los ajustes por rubro sin pasar de 100 %.
+  const bruto = companies.map((_, i) => (i % 9 === 8 || pesoReal[i] <= 0 ? 0 : (pesoReal[i] / ventaTotal) * (0.9 + rnd() * 0.12)));
+  const sumaBruto = bruto.reduce((s, v) => s + v, 0) || 1;
+  const participaciones = [];
+  for (const [i, company] of companies.entries()) {
+    if (!bruto[i]) continue;
+    const base = Math.round((bruto[i] / sumaBruto) * 95 * 100) / 100;
+    participaciones.push({ year: TODAY.getFullYear(), companyId: company.id, line: "", pct: base, updatedById: admin.id });
+    if (i < 2) {
+      participaciones.push({ year: TODAY.getFullYear(), companyId: company.id, line: "FLETES", pct: Math.round(base * 1.08 * 100) / 100, updatedById: admin.id });
+      participaciones.push({ year: TODAY.getFullYear(), companyId: company.id, line: "PROMOCION", pct: Math.round(base * 1.12 * 100) / 100, updatedById: admin.id });
+    }
+  }
+  await prisma.clientShare.createMany({ data: participaciones });
+  console.log(`🎯 Presupuesto ${TODAY.getFullYear()}: ${new Set(lineasPresupuesto.map((l) => l.accountCode)).size} cuentas · participación de ${participaciones.filter((p) => !p.line).length} clientes`);
 
   // ── Conexiones externas ────────────────────────────────────────────────────
   // Se crean vacías a propósito: las credenciales reales las carga el

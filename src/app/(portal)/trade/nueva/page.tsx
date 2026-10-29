@@ -14,8 +14,10 @@ export default async function NuevaActividadPage() {
     prisma.product.findMany({ where: { active: true }, select: { id: true, name: true, brand: true }, orderBy: [{ brand: "asc" }, { name: "asc" }] }),
     prisma.user.findMany({ where: { active: true, role: { in: ["ADMIN", "COMERCIAL", "SUPERVISOR"] } }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
+  // Todos los clientes activos: los traídos de Siigo suelen llegar sin tiendas
+  // y se les suman después desde la ficha de la actividad.
   const companies = await prisma.company.findMany({
-    where: { id: { in: [...new Set(byCity.map((r) => r.companyId))] } },
+    where: { active: true },
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });

@@ -52,6 +52,20 @@ export function fmtPeriod(period: string) {
   return new Date(y, m - 1, 1).toLocaleDateString("es-CO", { month: "long", year: "numeric" });
 }
 
+/** Plata escrita a mano: el punto es separador de miles y la coma, de decimales. Vacío → null. */
+export function parseAmount(raw: string) {
+  const s = raw.replace(/[^\d.,-]/g, "").replace(/\./g, "").replace(",", ".");
+  const v = Number(s);
+  return s === "" || !Number.isFinite(v) ? null : v;
+}
+
+/** Porcentaje escrito a mano: acepta coma o punto decimal («32,5» o «32.5»). Vacío → null. */
+export function parsePct(raw: string) {
+  const s = raw.replace(/[^\d.,-]/g, "").replace(",", ".");
+  const v = Number(s);
+  return s === "" || !Number.isFinite(v) ? null : v;
+}
+
 export function daysBetween(from: Date, to: Date) {
   return Math.round((to.getTime() - from.getTime()) / 86_400_000);
 }

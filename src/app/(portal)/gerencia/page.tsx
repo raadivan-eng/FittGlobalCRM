@@ -165,7 +165,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
         </p>
       )}
 
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-2">
+      <div className="mt-5 grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader title="Venta neta y margen bruto" subtitle="Últimos doce meses, el actual en curso" />
           <div className="px-4 py-4">
@@ -192,7 +192,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
         </Card>
       </div>
 
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[1.2fr_1fr]">
+      <div className="mt-5 grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[1.2fr_1fr]">
         <Card>
           <CardHeader
             title="¿Por qué cambió el margen?"
@@ -290,7 +290,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
         )}
       </Card>
 
-      <div className="mt-5 grid items-start gap-4 lg:grid-cols-2">
+      <div className="mt-5 grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader title="Margen bruto por categoría" subtitle="Porcentaje sobre la venta de cada categoría en el período" />
           <RankingBars items={categoryRows} format="percent" />
@@ -358,7 +358,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
         />
       </div>
 
-      <div className="mt-4 grid items-start gap-4 lg:grid-cols-[1fr_1.2fr]">
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[1fr_1.2fr]">
         <Card>
           <CardHeader title="Cartera por edades" subtitle="Saldo abierto con IVA, según días de mora" />
           <div className="px-4 py-4">

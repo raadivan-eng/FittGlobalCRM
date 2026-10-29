@@ -50,7 +50,8 @@ export default async function TradePage({ searchParams }: { searchParams: Search
     }),
     prisma.tradeActivity.count({ where }),
     prisma.tradeActivity.findMany({ where: liveWhere(now), select: { id: true, budget: true } }),
-    prisma.company.findMany({ where: { tradeActivities: { some: {} } }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    // Todos los clientes activos, incluidos los traídos de Siigo que aún no tienen actividades.
+    prisma.company.findMany({ where: { OR: [{ active: true }, { tradeActivities: { some: {} } }] }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.tradeActivity.aggregate({
       where: { status: { in: ["APROBADA", "CERRADA"] }, startDate: { gte: new Date(now.getFullYear(), 0, 1) } },
       _sum: { budget: true },

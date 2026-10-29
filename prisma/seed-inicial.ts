@@ -30,6 +30,12 @@ async function main() {
   console.log("🧹 Borrando datos de prueba…");
   // El orden respeta las llaves foráneas: primero lo que depende, luego la raíz.
   await prisma.$transaction([
+    prisma.forecastCriteria.deleteMany(),
+    prisma.clientShare.deleteMany(),
+    prisma.budgetRubro.deleteMany(),
+    prisma.budgetSettings.deleteMany(),
+    prisma.budgetLine.deleteMany(),
+    prisma.clientBudget.deleteMany(),
     prisma.incomeStatementLine.deleteMany(),
     prisma.savedView.deleteMany(),
     prisma.notification.deleteMany(),

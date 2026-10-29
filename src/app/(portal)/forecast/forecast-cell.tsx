@@ -6,8 +6,8 @@ import { fmtMoney } from "@/lib/format";
 import { IconCheck, IconEdit, IconX } from "@/components/icons";
 
 /**
- * `manual` es el monto cargado a mano (null si no hay); `baseline` el promedio
- * histórico que rige cuando no hay manual. Guardar vacío vuelve al promedio.
+ * `manual` es el monto cargado a mano (null si no hay); `baseline` lo que
+ * proyecta el criterio cuando no hay manual. Guardar vacío vuelve al criterio.
  */
 export function ForecastCell({
   period,
@@ -48,8 +48,8 @@ export function ForecastCell({
         inputMode="numeric"
         autoFocus
         className="field !w-32 !py-0.5 text-right"
-        placeholder={baseline > 0 ? `Prom. ${Math.round(baseline)}` : "0"}
-        title="Déjalo vacío para usar el promedio del año"
+        placeholder={baseline > 0 ? `Auto ${Math.round(baseline)}` : "0"}
+        title="Déjalo vacío para volver a lo que proyecta el criterio"
       />
       <button type="submit" className="btn btn-primary !px-1.5 !py-0.5" title="Guardar" aria-label="Guardar">
         <IconCheck size={12} />

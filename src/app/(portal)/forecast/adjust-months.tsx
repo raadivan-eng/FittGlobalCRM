@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ajustarMesesCliente, alternarMesExtraordinario } from "@/lib/actions-sales";
 import { fmtMoney, fmtPeriod } from "@/lib/format";
+import { project, type ForecastCriteria } from "@/lib/forecast-criteria";
 import { IconFilter, IconX } from "@/components/icons";
 
 type Month = {
@@ -12,16 +13,9 @@ type Month = {
   excluded: "TODOS" | "CLIENTE" | null;
 };
 
-/** Media desde el primer mes con compra, sin los meses excluidos: la misma regla que companyForecasts. */
-function average(history: Month[], excluded: (m: Month) => boolean) {
-  const counted = history.filter((m) => !excluded(m));
-  const first = counted.findIndex((m) => m.amount > 0);
-  if (first < 0) return { value: 0, months: 0 };
-  const span = counted.slice(first);
-  return {
-    value: Math.round(span.reduce((s, m) => s + m.amount, 0) / span.length),
-    months: span.length,
-  };
+/** La proyección con los meses marcados fuera: la misma cuenta que companyForecasts. */
+function projection(history: Month[], period: string, criteria: ForecastCriteria, excluded: (m: Month) => boolean) {
+  return project(history.map((m) => ({ ...m, excluded: excluded(m) ? m.excluded ?? "CLIENTE" : null })), period, criteria);
 }
 
 /**
@@ -71,28 +65,32 @@ function Modal({
   );
 }
 
-/** Meses extraordinarios de un cliente: se marcan y el promedio se recalcula en vivo antes de guardar. */
+/** Meses extraordinarios de un cliente: se marcan y la proyección se recalcula en vivo antes de guardar. */
 export function ClientMonthsAdjust({
+  period,
+  criteria,
   companyId,
   companyName,
   history,
   notes,
 }: {
+  period: string;
+  criteria: ForecastCriteria;
   companyId: string;
   companyName: string;
   history: Month[];
   notes: string | null;
 }) {
   const [marked, setMarked] = useState(() => new Set(history.filter((m) => m.excluded === "CLIENTE").map((m) => m.period)));
-  const before = average(history, (m) => m.excluded != null);
-  const after = average(history, (m) => m.excluded === "TODOS" || marked.has(m.period));
+  const before = projection(history, period, criteria, (m) => m.excluded != null);
+  const after = projection(history, period, criteria, (m) => m.excluded === "TODOS" || marked.has(m.period));
   const max = Math.max(...history.map((m) => m.amount), 1);
   const adjusted = history.some((m) => m.excluded === "CLIENTE");
 
   return (
     <Modal
-      title={`Ajustar promedio · ${companyName}`}
-      subtitle="Marca los meses extraordinarios (una negociación especial, una compra única): salen de la suma y del conteo."
+      title={`Ajustar proyección · ${companyName}`}
+      subtitle="Marca los meses extraordinarios (una negociación especial, una compra única): salen de la base del criterio."
       trigger={(open) => (
         <button
           type="button"
@@ -149,9 +147,9 @@ export function ClientMonthsAdjust({
           </ul>
           <div className="border-t border-[var(--border)] px-4 py-3">
             <p className="text-[13px]">
-              Promedio: <span className="text-[var(--text-secondary)]">{fmtMoney(before.value)}</span> →{" "}
+              Proyección: <span className="text-[var(--text-secondary)]">{fmtMoney(before.value)}</span> →{" "}
               <span className="font-semibold">{fmtMoney(after.value)}</span>{" "}
-              <span className="text-[12px] text-[var(--text-muted)]">({after.months} meses)</span>
+              <span className="text-[12px] text-[var(--text-muted)]">({after.dormant ? "inactivo" : after.seasonal ? "mismo mes del año anterior" : `${after.months} meses`})</span>
             </p>
             <input name="notes" defaultValue={notes ?? ""} className="field mt-2" placeholder="Motivo (opcional): negociación especial de febrero…" />
             <div className="mt-3 flex justify-end gap-2">

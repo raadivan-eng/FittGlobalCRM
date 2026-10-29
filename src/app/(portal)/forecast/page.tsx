@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { baselineWindow, companyForecasts, forecastVsBilling, leadForecasts, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
-import { FORECAST_SOURCE, LEAD_SOURCES, LEAD_STATUS, TIERS } from "@/lib/enums";
+import { companyForecasts, forecastVsBilling, getForecastCriteria, leadForecasts, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
+import { criteriaWindow, describeCriteria } from "@/lib/forecast-criteria";
+import { FORECAST_SOURCE, LEAD_SOURCES, LEAD_STATUS, LEAD_TEMPERATURE, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtMoney, fmtNumber, fmtPeriod } from "@/lib/format";
 import { one, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { GroupedBarChart, RankingBars } from "@/components/charts";
 import { ForecastCell } from "./forecast-cell";
+import { ForecastTabs } from "./tabs";
 import { ClientMonthsAdjust, ExcludeMonthButton } from "./adjust-months";
 import { quitarMesExtraordinario } from "@/lib/actions-sales";
 import { IconForecast, IconLead, IconSales, IconTarget } from "@/components/icons";
@@ -30,7 +32,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
   const period = options.find((o) => o.key === one(sp.periodo))?.key ?? periodKey(startOfMonth(0, now));
   const selected = options.find((o) => o.key === period)!;
   const editable = ["ADMIN", "COMERCIAL"].includes(user.role);
-  const months = baselineWindow(period, now).periods;
+  const criteria = await getForecastCriteria();
+  const months = criteriaWindow(period, criteria, now).periods;
 
   const [companies, forecasts, invoices, series, productForecasts, productSales, exclusions, leadsByPeriod] = await Promise.all([
     prisma.company.findMany({
@@ -38,7 +41,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
       orderBy: { name: "asc" },
       select: { id: true, name: true, tier: true, channel: true, owner: { select: { name: true } } },
     }),
-    companyForecasts([period]),
+    companyForecasts([period], undefined, { criteria }),
     prisma.invoice.groupBy({
       by: ["companyId"],
       where: { issueDate: { gte: selected.start, lt: selected.end }, status: NOT_VOID },
@@ -61,7 +64,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
       orderBy: [{ period: "asc" }, { createdAt: "asc" }],
       select: { id: true, period: true, companyId: true, notes: true, company: { select: { name: true } } },
     }),
-    leadForecasts([period]),
+    leadForecasts([period], criteria),
   ]);
 
   const fcByCompany = forecasts.get(period)!;
@@ -86,7 +89,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
 
   const clientsForecast = rows.reduce((s, r) => s + r.forecast, 0);
   const hotLeads = leadsByPeriod.get(period)!;
-  const totalForecast = clientsForecast + hotLeads.total;
+  const newBusiness = criteria.newBusiness;
+  const totalForecast = clientsForecast + hotLeads.total + newBusiness;
   const totalReal = rows.reduce((s, r) => s + r.real, 0);
   const isPast = selected.end <= now;
   const isCurrent = period === periodKey(startOfMonth(0, now));
@@ -106,7 +110,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
   const totalProgress = totalForecast ? (totalReal / totalForecast) * 100 : 0;
 
   // Facturación total de cada mes de la ventana. Se marca como atípico lo que
-  // pasa de 1,5 veces la mediana: es la pista para encontrar meses extraordinarios.
+  // pasa del factor de pico del criterio sobre la mediana: es la pista para
+  // encontrar meses extraordinarios.
   const billedByMonth = months.map((m) => {
     let amount = 0;
     for (const f of fcByCompany.values()) amount += f.history.find((h) => h.period === m)?.amount ?? 0;
@@ -116,7 +121,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
   const median = sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)] : 0;
   const monthTotals = months.map((m, i) => {
     const exclusion = exclusions.find((e) => e.period === m && !e.companyId);
-    return { period: m, amount: billedByMonth[i], exclusion, outlier: !exclusion && median > 0 && billedByMonth[i] > median * 1.5 };
+    return { period: m, amount: billedByMonth[i], exclusion, outlier: !exclusion && median > 0 && billedByMonth[i] > median * criteria.outlierFactor };
   });
   const monthMax = Math.max(...billedByMonth, 1);
   const clientExclusions = exclusions.filter((e) => e.companyId);
@@ -139,9 +144,10 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
           </form>
         }
       />
+      <ForecastTabs active="/forecast" />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Forecast del período" value={fmtCompact(totalForecast)} hint={`${fmtNumber(rows.filter((r) => r.forecast > 0).length)} clientes${hotLeads.leads.length ? ` + ${fmtNumber(hotLeads.leads.length)} leads calientes` : " con proyección"}`} icon={<IconForecast size={15} />} />
+        <StatTile label="Forecast del período" value={fmtCompact(totalForecast)} hint={`${fmtNumber(rows.filter((r) => r.forecast > 0).length)} clientes${hotLeads.leads.length ? ` + ${fmtNumber(hotLeads.leads.length)} leads` : " con proyección"}${newBusiness ? " + nuevos" : ""}`} icon={<IconForecast size={15} />} />
         <StatTile label="Facturación real" value={fmtCompact(totalReal)} hint={isCurrent ? "Mes en curso, aún parcial" : isPast ? "Período cerrado" : "Período futuro, sin facturación"} icon={<IconSales size={15} />} />
         <StatTile
           label="Avance"
@@ -190,9 +196,14 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
             title={`Proyección por cliente · ${fmtPeriod(period)}`}
             subtitle={`${
               windowLabel
-                ? `Sin carga manual, la meta es la facturación media mensual de ${windowLabel}, desde el primer mes con compra.`
-                : "No hay meses cerrados del año para promediar: sólo cuenta lo cargado a mano."
-            }${editable ? " Ajusta el monto para fijarlo; déjalo vacío para volver al promedio." : ""}`}
+                ? `Sin carga manual, la meta sale del criterio: ${describeCriteria(criteria)} (${windowLabel}).`
+                : "No hay meses cerrados para proyectar: sólo cuenta lo cargado a mano."
+            }${editable ? " Ajusta el monto para fijarlo; déjalo vacío para volver al criterio." : ""}`}
+            action={
+              <Link href="/forecast/criterio" className="btn btn-ghost !px-2 text-[12.5px]">
+                Criterio
+              </Link>
+            }
           />
           <div className="scroll-x">
             <table className="tbl">
@@ -223,10 +234,14 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                         <span className="inline-flex items-center gap-1.5">
                           <EnumBadge option={FORECAST_SOURCE.get(r.fc.source)} />
                           {r.fc.source === "PROMEDIO" && (
-                            <span className="text-[12px] text-[var(--text-muted)]">{r.fc.months} m</span>
+                            <span className="text-[12px] text-[var(--text-muted)]">
+                              {r.fc.dormant ? "inactivo" : r.fc.seasonal ? "estacional" : `${r.fc.months} m`}
+                            </span>
                           )}
                           {editable && r.fc.history.length > 0 && (
                             <ClientMonthsAdjust
+                              period={period}
+                              criteria={criteria}
                               companyId={r.company.id}
                               companyName={r.company.name}
                               history={r.fc.history}
@@ -274,22 +289,35 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                 ))}
               </tbody>
               <tfoot>
-                {hotLeads.leads.length > 0 && (
+                {(hotLeads.leads.length > 0 || newBusiness > 0) && (
                   <>
                     <tr className="text-[var(--text-secondary)]">
                       <td colSpan={4}>Subtotal clientes</td>
                       <td className="num">{fmtMoney(clientsForecast)}</td>
                       <td colSpan={3} />
                     </tr>
-                    <tr className="text-[var(--text-secondary)]">
-                      <td colSpan={4}>
-                        <Link href={`/leads?estado=ABIERTOS&temperatura=CALIENTE&cierre=${period}`} className="hover:text-[var(--brand)] hover:underline">
-                          Leads calientes que cierran este mes ({fmtNumber(hotLeads.leads.length)})
-                        </Link>
-                      </td>
-                      <td className="num">{fmtMoney(hotLeads.total)}</td>
-                      <td colSpan={3} />
-                    </tr>
+                    {hotLeads.leads.length > 0 && (
+                      <tr className="text-[var(--text-secondary)]">
+                        <td colSpan={4}>
+                          <Link href={`/leads?estado=ABIERTOS&cierre=${period}`} className="hover:text-[var(--brand)] hover:underline">
+                            Nuevos negocios en leads ({fmtNumber(hotLeads.leads.length)})
+                          </Link>
+                        </td>
+                        <td className="num">{fmtMoney(hotLeads.total)}</td>
+                        <td colSpan={3} />
+                      </tr>
+                    )}
+                    {newBusiness > 0 && (
+                      <tr className="text-[var(--text-secondary)]">
+                        <td colSpan={4}>
+                          <Link href="/forecast/criterio" className="hover:text-[var(--brand)] hover:underline">
+                            Nuevos negocios sin identificar
+                          </Link>
+                        </td>
+                        <td className="num">{fmtMoney(newBusiness)}</td>
+                        <td colSpan={3} />
+                      </tr>
+                    )}
                   </>
                 )}
                 <tr className="bg-[var(--surface-2)] font-semibold">
@@ -307,8 +335,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
         <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
         <Card>
           <CardHeader
-            title={`Leads calientes · ${fmtPeriod(period)}`}
-            subtitle="Prospectos marcados como calientes con este mes de cierre. Su valor suma al forecast hasta que se ganan o se pierden."
+            title={`Leads en el forecast · ${fmtPeriod(period)}`}
+            subtitle={`Prospectos abiertos que aportan a este mes: calientes al ${fmtNumber(criteria.hotLeadPct)}%${criteria.warmLeadPct ? `, tibios al ${fmtNumber(criteria.warmLeadPct)}%` : ""} de su valor${criteria.leadMonths > 1 ? `, durante ${criteria.leadMonths} meses desde el cierre` : ""}. Suman hasta que se ganan o se pierden.`}
             action={
               <Link href={`/leads?estado=ABIERTOS&temperatura=CALIENTE&cierre=${period}`} className="btn btn-ghost !px-2 text-[12.5px]">
                 Ver
@@ -318,7 +346,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
           {hotLeads.leads.length === 0 ? (
             <p className="flex flex-col items-center gap-2 px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">
               <IconLead size={20} />
-              Ningún lead caliente tiene cierre tentativo en este mes.
+              Ningún lead abierto aporta a este mes con el criterio vigente.
             </p>
           ) : (
             <ul className="divide-y divide-[var(--border)]">
@@ -329,7 +357,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                       {l.name}
                     </Link>
                     <span className="block truncate text-[11.5px] text-[var(--text-muted)]">
-                      {LEAD_SOURCES.label(l.source)} · {LEAD_STATUS.label(l.status)}{l.owner ? ` · ${l.owner}` : ""}
+                      {LEAD_TEMPERATURE.label(l.temperature)} · {LEAD_SOURCES.label(l.source)} · {LEAD_STATUS.label(l.status)}{l.owner ? ` · ${l.owner}` : ""}
                     </span>
                   </span>
                   <span className="shrink-0 font-semibold tabular-nums">{fmtCompact(l.amount)}</span>
@@ -345,7 +373,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
         <Card>
           <CardHeader
             title="Meses extraordinarios"
-            subtitle="Lo que se excluye no entra al promedio. Úsalo para negociaciones especiales o compras que no se van a repetir."
+            subtitle="Lo que se excluye no entra a la base del criterio. Úsalo para negociaciones especiales o compras que no se van a repetir."
           />
           {monthTotals.length === 0 ? (
             <p className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">Este período no tiene meses cerrados para promediar.</p>
@@ -391,7 +419,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
               {monthTotals.some((m) => m.outlier) && (
                 <p className="flex items-center gap-1.5">
                   <span className="inline-block h-2 w-2 rounded-full bg-[var(--warning)]" />
-                  Más de 1,5 veces el mes típico: revisa si fue extraordinario.
+                  Más de {criteria.outlierFactor.toLocaleString("es-CO")} veces el mes típico: revisa si fue extraordinario.
                 </p>
               )}
               {monthTotals.filter((m) => m.exclusion?.notes).map((m) => (

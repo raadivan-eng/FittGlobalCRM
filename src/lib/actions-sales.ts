@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { prisma } from "./prisma";
 import { requireRole } from "./auth";
+import { criteriaFromInput } from "./forecast-criteria";
 
 /**
  * Alta o actualización del forecast de un cliente para un período.
@@ -106,4 +108,17 @@ export async function ajustarMesesCliente(formData: FormData) {
   if (keep.length) await prisma.forecastExclusion.updateMany({ where: { id: { in: keep } }, data: { notes } });
 
   revalidateForecast(companyId);
+}
+
+/**
+ * Guarda el criterio del forecast. Cambia la proyección automática de todos los
+ * clientes y lo que suman los leads, así que se revalida todo el portal.
+ * Es un upsert de una sola fila: repetirlo no hace daño en D1.
+ */
+export async function guardarCriterioForecast(formData: FormData) {
+  const user = await requireRole(["ADMIN"]);
+  const data = { ...criteriaFromInput((name) => formData.get(name)?.toString() ?? null), updatedById: user.id };
+  await prisma.forecastCriteria.upsert({ where: { id: "default" }, create: { id: "default", ...data }, update: data });
+  revalidatePath("/", "layout");
+  redirect("/forecast/criterio?guardado=1");
 }

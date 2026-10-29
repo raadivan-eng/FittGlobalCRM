@@ -2,7 +2,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { leadForecasts, periodKey, startOfMonth } from "@/lib/analytics";
+import { getForecastCriteria, leadForecasts, periodKey, startOfMonth } from "@/lib/analytics";
 import { CONNECTION_STATUS, LEAD_ENTRIES, LEAD_OPEN, LEAD_SOURCES, LEAD_STATUS, LEAD_TEMPERATURE } from "@/lib/enums";
 import { closePeriodOptions, channelToken, LEAD_ROLES } from "@/lib/leads";
 import { daysBetween, fmtCompact, fmtMoney, fmtNumber, fmtPeriod, relativeDays } from "@/lib/format";
@@ -62,6 +62,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
       : {}),
   };
 
+  const criteria = await getForecastCriteria();
   const [leads, total, open, hot, bySource, won, lost, monthLeads, owners, meta] = await Promise.all([
     prisma.lead.findMany({
       where,
@@ -85,7 +86,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
     prisma.lead.groupBy({ by: ["source"], where: { status: { in: [...LEAD_OPEN] } }, _count: true }),
     prisma.lead.count({ where: { status: "GANADO", convertedAt: { gte: since } } }),
     prisma.lead.count({ where: { status: "PERDIDO", updatedAt: { gte: since } } }),
-    leadForecasts([currentPeriod]),
+    leadForecasts([currentPeriod], criteria),
     prisma.user.findMany({ where: { active: true, role: { in: LEAD_ROLES } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.apiConnection.findUnique({ where: { provider: "META" }, select: { status: true } }),
   ]);
@@ -106,7 +107,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
     <>
       <PageHeader
         title="Leads"
-        subtitle="Negocios que todavía no son clientes y se quieren convertir: los que llegan por redes, WhatsApp, la web o contacto directo, y los que sale a buscar el área comercial. Los calientes con mes y valor suman al forecast."
+        subtitle="Negocios que todavía no son clientes y se quieren convertir: los que llegan por redes, WhatsApp, la web o contacto directo, y los que sale a buscar el área comercial. Los que tienen mes y valor suman al forecast según su temperatura y el criterio."
         actions={
           <>
             {meta?.status && meta.status !== "SIN_CONFIGURAR" && <SyncMetaButton />}
@@ -135,9 +136,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
         <StatTile
           label={`Al forecast de ${fmtPeriod(currentPeriod).split(" ")[0]}`}
           value={fmtCompact(month.total)}
-          hint={`${fmtNumber(month.leads.length)} lead${month.leads.length === 1 ? "" : "s"} caliente${month.leads.length === 1 ? "" : "s"} cierran este mes`}
+          hint={`${fmtNumber(month.leads.length)} lead${month.leads.length === 1 ? "" : "s"} aporta${month.leads.length === 1 ? "" : "n"} este mes según el criterio`}
           icon={<IconForecast size={15} />}
-          href={`/leads?temperatura=CALIENTE&cierre=${currentPeriod}`}
+          href="/forecast"
         />
         <StatTile
           label={`Conversión · ${DIAS_CONVERSION} días`}
@@ -224,7 +225,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
                   <tbody>
                     {leads.map((l) => {
                       const days = daysBetween(l.lastActivityAt, now);
-                      const counts = l.temperature === "CALIENTE" && LEAD_OPEN.includes(l.status as never) && l.closePeriod && l.expectedValue;
+                      const pct = l.temperature === "CALIENTE" ? criteria.hotLeadPct : l.temperature === "TIBIO" ? criteria.warmLeadPct : 0;
+                      const counts = pct > 0 && LEAD_OPEN.includes(l.status as never) && l.closePeriod && l.expectedValue;
                       return (
                         <tr key={l.id}>
                           <td className="min-w-[200px]">
@@ -264,7 +266,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
                             ) : (
                               <span className="text-[var(--text-muted)]">—</span>
                             )}
-                            {counts && <span className="block text-[11px] text-[var(--text-muted)]">Suma al forecast</span>}
+                            {counts && <span className="block text-[11px] text-[var(--text-muted)]">Suma al forecast{pct < 100 ? ` al ${pct}%` : ""}</span>}
                           </td>
                           <td className="num whitespace-nowrap">{l.expectedValue ? fmtMoney(l.expectedValue) : <span className="text-[var(--text-muted)]">—</span>}</td>
                           <td className="whitespace-nowrap text-[var(--text-secondary)]">{l.owner?.name ?? <span className="text-[var(--text-muted)]">Sin asignar</span>}</td>

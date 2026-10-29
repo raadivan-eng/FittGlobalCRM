@@ -153,7 +153,12 @@ export function ActivityForm({
                 ))}
               </select>
             </Field>
-            {company && (
+            {company && company.cities.length === 0 && (
+              <p className="text-[12px] text-[var(--text-secondary)]">
+                Este cliente todavía no tiene tiendas activas. La actividad se crea sin tiendas por verificar; súmalas desde su ficha cuando existan.
+              </p>
+            )}
+            {company && company.cities.length > 0 && (
               <fieldset className="flex flex-col gap-1.5">
                 <legend className="mb-1 text-[12px] font-medium text-[var(--text-secondary)]">Tiendas</legend>
                 <label className="flex items-center gap-2 text-[13px]">

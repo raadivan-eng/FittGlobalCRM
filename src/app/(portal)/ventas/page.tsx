@@ -143,7 +143,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
           orderBy: { issueDate: "desc" },
           skip,
           take,
-          include: { company: { select: { id: true, name: true } }, invoice: { select: { number: true } } },
+          include: { company: { select: { id: true, name: true } }, invoice: { select: { id: true, number: true } } },
         })
       : Promise.resolve([]),
     view === "notas" ? prisma.creditNote.count({ where: creditWhere }) : Promise.resolve(0),
@@ -306,7 +306,13 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                               {n.company.name}
                             </Link>
                           </td>
-                          <td className="font-mono text-[11.5px] text-[var(--text-secondary)]">{n.invoice?.number ?? "—"}</td>
+                          <td className="font-mono text-[11.5px] text-[var(--text-secondary)]">
+                            {n.invoice ? (
+                              <Link href={`/ventas/facturas/${n.invoice.id}`} className="hover:text-[var(--brand)] hover:underline">
+                                {n.invoice.number}
+                              </Link>
+                            ) : "—"}
+                          </td>
                           <td className="max-w-[280px] truncate text-[var(--text-secondary)]" title={n.reason ?? undefined}>{n.reason ?? "—"}</td>
                           <td className="num font-semibold">{fmtMoney(n.net)}</td>
                           <td className="num text-[var(--text-secondary)]">{fmtMoney(n.total)}</td>
@@ -336,7 +342,9 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                         return (
                           <tr key={i.id}>
                             <td>
-                              <span className="font-mono text-[12px] font-medium">{i.number}</span>
+                              <Link href={`/ventas/facturas/${i.id}`} className="font-mono text-[12px] font-medium hover:text-[var(--brand)] hover:underline">
+                                {i.number}
+                              </Link>
                               <p className="font-mono text-[11px] text-[var(--text-muted)]">{i.order?.number ?? "—"}</p>
                             </td>
                             <td className="whitespace-nowrap text-[var(--text-secondary)]">{fmtDate(i.issueDate)}</td>

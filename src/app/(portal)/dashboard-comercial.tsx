@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
-  billedBetween, companyForecasts, coverage, expiryReport, fieldKpis, forecastVsBilling, leadForecasts,
+  billedBetween, companyForecasts, coverage, expiryReport, fieldKpis, forecastVsBilling, getForecastCriteria, leadForecasts,
   NOT_VOID, periodKey, receivables, startOfMonth, sumForecasts, topCompanies, topProducts, topStores,
 } from "@/lib/analytics";
 import { EXPIRY_BANDS, INCIDENT_TYPES, SEVERITIES, TIERS } from "@/lib/enums";
@@ -29,6 +29,7 @@ export async function DashboardComercial({ userName }: { userName: string }) {
   // Mismo tramo del mes anterior: comparar 27 días contra 31 sería engañoso.
   const prevSameSpan = new Date(prevMonth.getFullYear(), prevMonth.getMonth(), dayOfMonth + 1);
   const quarterStart = startOfMonth(-2, now);
+  const criteria = await getForecastCriteria();
 
   const [
     mtd, prevMtd, series, forecastMonth, leadsMonth, expiry, cover, field, cart,
@@ -37,8 +38,8 @@ export async function DashboardComercial({ userName }: { userName: string }) {
     billedBetween(monthStart, nextMonth),
     billedBetween(prevMonth, prevSameSpan),
     forecastVsBilling(12),
-    companyForecasts([periodKey(monthStart)]),
-    leadForecasts([periodKey(monthStart)]),
+    companyForecasts([periodKey(monthStart)], undefined, { criteria }),
+    leadForecasts([periodKey(monthStart)], criteria),
     expiryReport(),
     coverage(monthStart, nextMonth),
     fieldKpis(monthStart, nextMonth),
@@ -64,7 +65,7 @@ export async function DashboardComercial({ userName }: { userName: string }) {
   ]);
 
   const leadsTarget = leadsMonth.get(periodKey(monthStart))?.total ?? 0;
-  const forecastTarget = sumForecasts(forecastMonth.get(periodKey(monthStart))) + leadsTarget;
+  const forecastTarget = sumForecasts(forecastMonth.get(periodKey(monthStart))) + leadsTarget + criteria.newBusiness;
   const delta = prevMtd.total > 0 ? ((mtd.total - prevMtd.total) / prevMtd.total) * 100 : null;
   const [companyCount, storeCount, orderCount] = activeCounts;
 
