@@ -47,8 +47,8 @@ export type CompanyMonth = { units: number; value: number; stores: number };
  * Las tiendas con venta salen de un conteo aparte: un groupBy por tienda y
  * producto multiplicaría las filas por el portafolio.
  */
-export async function monthlyByCompany(periods: string[], companyId?: string) {
-  const where = { period: { in: periods }, ...(companyId ? { companyId } : {}) };
+export async function monthlyByCompany(periods: string[], companyIds: string[] = []) {
+  const where = { period: { in: periods }, ...(companyIds.length ? { companyId: { in: companyIds } } : {}) };
   const [byProduct, byStore, products] = await Promise.all([
     prisma.sellOut.groupBy({ by: ["companyId", "period", "productId"], where, _sum: { units: true } }),
     prisma.sellOut.groupBy({ by: ["companyId", "period", "storeId"], where, _sum: { units: true } }),
@@ -107,15 +107,15 @@ export async function sellInUnits(periods: string[], companyIds: string[]) {
 export const ROTATION_LOOKBACK = 3;
 
 /**
- * Tiendas de un cliente en el mes: lo vendido, el mes anterior y el promedio de
+ * Tiendas de uno o varios clientes en el mes: lo vendido, el mes anterior y el promedio de
  * los meses previos. Una tienda que vendía y este mes no vendió nada dejó de
  * rotar: casi siempre es quiebre, producto fuera de góndola o una devolución.
  */
-export async function storePerformance(companyId: string, period: string) {
+export async function storePerformance(companyIds: string[], period: string) {
   const previous = periodsUntil(addMonths(period, -1), ROTATION_LOOKBACK);
   const rows = await prisma.sellOut.groupBy({
     by: ["storeId", "period"],
-    where: { companyId, period: { in: [...previous, period] } },
+    where: { companyId: { in: companyIds }, period: { in: [...previous, period] } },
     _sum: { units: true },
   });
 
@@ -142,10 +142,10 @@ export async function storePerformance(companyId: string, period: string) {
 }
 
 /** Productos del alcance en el mes y el anterior. */
-export async function productPerformance(period: string, companyId?: string) {
+export async function productPerformance(period: string, companyIds: string[] = []) {
   const rows = await prisma.sellOut.groupBy({
     by: ["productId", "period"],
-    where: { period: { in: [addMonths(period, -1), period] }, ...(companyId ? { companyId } : {}) },
+    where: { period: { in: [addMonths(period, -1), period] }, ...(companyIds.length ? { companyId: { in: companyIds } } : {}) },
     _sum: { units: true },
   });
   const byProduct = new Map<string, { units: number; prev: number }>();

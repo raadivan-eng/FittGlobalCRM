@@ -4,7 +4,7 @@ import { requireSection } from "@/lib/auth";
 import { NOT_VOID, startOfMonth } from "@/lib/analytics";
 import { CHANNELS, COMPANY_TYPES, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -18,17 +18,17 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
   await requireSection("clientes");
   const sp = await searchParams;
   const q = one(sp.q);
-  const tier = one(sp.tier);
-  const channel = one(sp.canal);
-  const type = one(sp.tipo);
+  const tiers = many(sp.tier);
+  const channels = many(sp.canal);
+  const types = many(sp.tipo);
   const { page, pageSize, skip, take } = pagination(sp.page, 20);
 
   const where = {
     active: true,
     ...(q ? { OR: [{ name: { contains: q } }, { code: { contains: q } }, { city: { contains: q } }] } : {}),
-    ...(tier ? { tier } : {}),
-    ...(channel ? { channel } : {}),
-    ...(type ? { type } : {}),
+    ...(tiers.length ? { tier: anyOf(tiers) } : {}),
+    ...(channels.length ? { channel: anyOf(channels) } : {}),
+    ...(types.length ? { type: anyOf(types) } : {}),
   };
 
   const since = startOfMonth(-11);
@@ -76,9 +76,9 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
       <Filters
         fields={[
           { type: "search", name: "q", placeholder: "Buscar por nombre, código o ciudad…" },
-          { type: "select", name: "tier", label: "Clasificación ABC", options: TIERS.options.map((o) => ({ value: o.value, label: o.label })) },
-          { type: "select", name: "canal", label: "Canal", options: CHANNELS.options.map((o) => ({ value: o.value, label: o.label })) },
-          { type: "select", name: "tipo", label: "Tipo", options: COMPANY_TYPES.options.map((o) => ({ value: o.value, label: o.label })) },
+          { type: "select", name: "tier", label: "Clasificación ABC", options: TIERS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+          { type: "select", name: "canal", label: "Canal", options: CHANNELS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+          { type: "select", name: "tipo", label: "Tipo", options: COMPANY_TYPES.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
         ]}
       />
 

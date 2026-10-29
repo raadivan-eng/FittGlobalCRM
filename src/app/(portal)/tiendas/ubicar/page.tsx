@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
 import { GEO_STATUS } from "@/lib/enums";
 import { fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { confirmarUbicacion } from "@/lib/actions-stores";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
@@ -26,14 +26,14 @@ export default async function UbicarTiendasPage({ searchParams }: { searchParams
   await requireRole(["ADMIN", "SUPERVISOR"]);
   const sp = await searchParams;
   const estado = REVIEWABLE.includes(one(sp.estado)) ? one(sp.estado) : "POR_REVISAR";
-  const companyId = one(sp.cliente);
+  const companyIds = many(sp.cliente);
   const q = one(sp.q);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const where = {
     active: true,
     geoStatus: estado,
-    ...(companyId ? { companyId } : {}),
+    ...(companyIds.length ? { companyId: anyOf(companyIds) } : {}),
     ...(q ? { OR: [{ name: { contains: q } }, { code: { contains: q } }, { city: { contains: q } }] } : {}),
   };
 
@@ -92,7 +92,7 @@ export default async function UbicarTiendasPage({ searchParams }: { searchParams
               label: "Estado",
               options: REVIEWABLE.map((v) => ({ value: v, label: GEO_STATUS.label(v) })),
             },
-            { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-52" },
+            { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-52", multi: true },
           ]}
         />
       </div>

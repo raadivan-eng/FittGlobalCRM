@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
 import { NOT_VOID, startOfMonth } from "@/lib/analytics";
 import { fmtCompact, fmtMoneyPrecise, fmtNumber, fmtPct } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, PageHeader } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -16,15 +16,15 @@ export default async function ProductosPage({ searchParams }: { searchParams: Se
   await requireSection("productos");
   const sp = await searchParams;
   const q = one(sp.q);
-  const category = one(sp.categoria);
-  const brand = one(sp.marca);
+  const categoryFilter = many(sp.categoria);
+  const brandFilter = many(sp.marca);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const where = {
     active: true,
     ...(q ? { OR: [{ name: { contains: q } }, { sku: { contains: q } }, { brand: { contains: q } }] } : {}),
-    ...(category ? { category } : {}),
-    ...(brand ? { brand } : {}),
+    ...(categoryFilter.length ? { category: anyOf(categoryFilter) } : {}),
+    ...(brandFilter.length ? { brand: anyOf(brandFilter) } : {}),
   };
 
   const [products, total, categories, brands] = await Promise.all([
@@ -65,8 +65,8 @@ export default async function ProductosPage({ searchParams }: { searchParams: Se
       <Filters
         fields={[
           { type: "search", name: "q", placeholder: "Nombre, SKU o marca…" },
-          { type: "select", name: "categoria", label: "Categoría", options: categories.map((c) => ({ value: c.category, label: c.category })) },
-          { type: "select", name: "marca", label: "Marca", options: brands.map((b) => ({ value: b.brand, label: b.brand })) },
+          { type: "select", name: "categoria", label: "Categoría", options: categories.map((c) => ({ value: c.category, label: c.category })), multi: true },
+          { type: "select", name: "marca", label: "Marca", options: brands.map((b) => ({ value: b.brand, label: b.brand })), multi: true },
         ]}
       />
 

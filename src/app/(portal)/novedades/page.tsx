@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
 import { INCIDENT_STATUS, INCIDENT_TYPES, SEVERITIES } from "@/lib/enums";
 import { fmtDate, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -17,8 +17,8 @@ export default async function NovedadesPage({ searchParams }: { searchParams: Se
   const user = await requireSection("novedades");
   const sp = await searchParams;
   const status = one(sp.estado) || "PENDIENTES";
-  const severity = one(sp.severidad);
-  const type = one(sp.tipo);
+  const severities = many(sp.severidad);
+  const types = many(sp.tipo);
   const storeId = one(sp.tienda);
   const { page, pageSize, skip, take } = pagination(sp.page, 20);
 
@@ -27,8 +27,8 @@ export default async function NovedadesPage({ searchParams }: { searchParams: Se
 
   const where = {
     ...statusFilter,
-    ...(severity ? { severity } : {}),
-    ...(type ? { type } : {}),
+    ...(severities.length ? { severity: anyOf(severities) } : {}),
+    ...(types.length ? { type: anyOf(types) } : {}),
     ...(storeId ? { storeId } : {}),
     ...(user.role === "MERCADERISTA" ? { reportedById: user.id } : {}),
   };
@@ -87,8 +87,8 @@ export default async function NovedadesPage({ searchParams }: { searchParams: Se
               ],
               width: "w-60",
             },
-            { type: "select", name: "severidad", label: "Severidad", options: SEVERITIES.options.map((o) => ({ value: o.value, label: o.label })) },
-            { type: "select", name: "tipo", label: "Tipo", options: INCIDENT_TYPES.options.map((o) => ({ value: o.value, label: o.label })), width: "w-52" },
+            { type: "select", name: "severidad", label: "Severidad", options: SEVERITIES.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+            { type: "select", name: "tipo", label: "Tipo", options: INCIDENT_TYPES.options.map((o) => ({ value: o.value, label: o.label })), width: "w-52", multi: true },
           ]}
         />
 

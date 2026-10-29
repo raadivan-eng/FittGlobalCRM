@@ -4,7 +4,7 @@ import { requireSection, TRADE_ROLES } from "@/lib/auth";
 import { complianceByActivity, liveWhere, tradePhase } from "@/lib/trade";
 import { TRADE_PHASE, TRADE_STATUS, TRADE_TYPES } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, Meter, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -20,8 +20,8 @@ export default async function TradePage({ searchParams }: { searchParams: Search
   const user = await requireSection("trade");
   const sp = await searchParams;
   const status = one(sp.estado) || "ABIERTAS";
-  const type = one(sp.tipo);
-  const companyId = one(sp.cliente);
+  const types = many(sp.tipo);
+  const companyIds = many(sp.cliente);
   const { page, pageSize, skip, take } = pagination(sp.page, 20);
   const now = new Date();
 
@@ -30,7 +30,11 @@ export default async function TradePage({ searchParams }: { searchParams: Search
     : status === "VIGENTES" ? liveWhere(now)
     : status === "TODAS" ? {}
     : { status };
-  const where = { ...statusFilter, ...(type ? { type } : {}), ...(companyId ? { companyId } : {}) };
+  const where = {
+    ...statusFilter,
+    ...(types.length ? { type: anyOf(types) } : {}),
+    ...(companyIds.length ? { companyId: anyOf(companyIds) } : {}),
+  };
 
   const [activities, total, live, companies, yearBudget] = await Promise.all([
     prisma.tradeActivity.findMany({
@@ -106,8 +110,8 @@ export default async function TradePage({ searchParams }: { searchParams: Search
               ],
               width: "w-64",
             },
-            { type: "select", name: "tipo", label: "Tipo", options: TRADE_TYPES.options.map((o) => ({ value: o.value, label: o.label })), width: "w-52" },
-            { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-60" },
+            { type: "select", name: "tipo", label: "Tipo", options: TRADE_TYPES.options.map((o) => ({ value: o.value, label: o.label })), width: "w-52", multi: true },
+            { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-60", multi: true },
           ]}
         />
 

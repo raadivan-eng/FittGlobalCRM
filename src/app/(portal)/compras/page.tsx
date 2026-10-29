@@ -5,7 +5,7 @@ import { DEFAULT_REVIEW, DEFAULT_SERVICE, HISTORY_MONTHS, MAX_GUARD_DAYS, MIN_RE
 import { DEMAND_SOURCE, PURCHASE_SIGNAL } from "@/lib/enums";
 import { generarOrdenesCompra } from "@/lib/actions-purchasing";
 import { fmtCompact, fmtDateShort, fmtMoney, fmtNumber } from "@/lib/format";
-import { one, type SearchParams } from "@/lib/params";
+import { many, one, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { RankingBars } from "@/components/charts";
@@ -31,16 +31,16 @@ export default async function ComprasPage({ searchParams }: { searchParams: Sear
 
   const reviewDays = REVIEW_OPTIONS.find((d) => String(d) === one(sp.ciclo)) ?? DEFAULT_REVIEW;
   const service = SERVICE_LEVELS.find((s) => s.value === one(sp.servicio)) ?? SERVICE_LEVELS.find((s) => s.value === DEFAULT_SERVICE)!;
-  const signal = one(sp.senal);
-  const supplierId = one(sp.proveedor);
+  const signals = many(sp.senal);
+  const supplierIds = many(sp.proveedor);
   const q = one(sp.q).trim().toLowerCase();
 
   const now = new Date();
   const all = await purchasePlan({ reviewDays, z: service.z, now });
 
   const rows = all
-    .filter((r) => !signal || r.plan.signal === signal)
-    .filter((r) => !supplierId || r.condition?.supplierId === supplierId)
+    .filter((r) => !signals.length || signals.includes(r.plan.signal))
+    .filter((r) => !supplierIds.length || (!!r.condition && supplierIds.includes(r.condition.supplierId)))
     .filter((r) => !q || r.product.sku.toLowerCase().includes(q) || r.product.name.toLowerCase().includes(q))
     .sort(
       (a, b) =>
@@ -175,8 +175,8 @@ export default async function ComprasPage({ searchParams }: { searchParams: Sear
           <Filters
             fields={[
               { type: "search", name: "q", placeholder: "SKU o producto…" },
-              { type: "select", name: "senal", label: "Todas las señales", options: PURCHASE_SIGNAL.options.map((o) => ({ value: o.value, label: o.label })) },
-              { type: "select", name: "proveedor", label: "Todos los proveedores", options: supplierOptions },
+              { type: "select", name: "senal", label: "Todas las señales", options: PURCHASE_SIGNAL.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+              { type: "select", name: "proveedor", label: "Todos los proveedores", options: supplierOptions, multi: true },
               {
                 type: "select",
                 name: "ciclo",

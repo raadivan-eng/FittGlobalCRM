@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
 import { CANDIDATE_STATUS } from "@/lib/enums";
 import { fmtDate, fmtDateTime, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { crearTiendaDescubierta, descartarTiendaDescubierta, vincularTiendaDescubierta } from "@/lib/actions-locator";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
@@ -19,13 +19,13 @@ export default async function TiendasDescubiertasPage({ searchParams }: { search
   const sp = await searchParams;
   const raw = one(sp.estado);
   const estado = raw === "TODAS" || CANDIDATE_STATUS.values.includes(raw as never) ? raw : "NUEVA";
-  const companyId = one(sp.cliente);
+  const companyIds = many(sp.cliente);
   const q = one(sp.q);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const where = {
     ...(estado !== "TODAS" ? { status: estado } : {}),
-    ...(companyId ? { companyId } : {}),
+    ...(companyIds.length ? { companyId: anyOf(companyIds) } : {}),
     ...(q ? { OR: [{ name: { contains: q } }, { address: { contains: q } }, { city: { contains: q } }] } : {}),
   };
 
@@ -126,7 +126,7 @@ export default async function TiendasDescubiertasPage({ searchParams }: { search
               label: "Estado",
               options: [...CANDIDATE_STATUS.options.map((o) => ({ value: o.value, label: o.label })), { value: "TODAS", label: "Todas" }],
             },
-            { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-52" },
+            { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-52", multi: true },
           ]}
         />
       </div>

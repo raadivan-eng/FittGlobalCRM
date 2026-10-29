@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { RECEIPT_ROLES, requireSection } from "@/lib/auth";
 import { RECEIPT_STATUS } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -20,13 +20,13 @@ export default async function IngresosPage({ searchParams }: { searchParams: Sea
   const canEdit = RECEIPT_ROLES.includes(user.role);
   const sp = await searchParams;
   const q = one(sp.q).trim();
-  const status = one(sp.estado);
-  const warehouseId = one(sp.bodega);
+  const statuses = many(sp.estado);
+  const warehouseIds = many(sp.bodega);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const where = {
-    ...(status ? { status } : {}),
-    ...(warehouseId ? { warehouseId } : {}),
+    ...(statuses.length ? { status: anyOf(statuses) } : {}),
+    ...(warehouseIds.length ? { warehouseId: anyOf(warehouseIds) } : {}),
     ...(q ? { OR: [{ code: { contains: q } }, { invoiceNumber: { contains: q } }, { supplierName: { contains: q } }] } : {}),
   };
 
@@ -53,7 +53,7 @@ export default async function IngresosPage({ searchParams }: { searchParams: Sea
   const limite = Date.now() - DIAS_SIN_RECIBIR * 86_400_000;
   const atrasados = pendientes.filter((r) => r.createdAt.getTime() < limite).length;
   const conDiferencias = recibidos.filter((r) => r.status === "CON_DIFERENCIAS").length;
-  const vacio = total === 0 && !q && !status && !warehouseId;
+  const vacio = total === 0 && !q && !statuses.length && !warehouseIds.length;
 
   return (
     <>
@@ -98,8 +98,8 @@ export default async function IngresosPage({ searchParams }: { searchParams: Sea
         <Filters
           fields={[
             { type: "search", name: "q", placeholder: "Factura, proveedor o consecutivo…", width: "w-full sm:w-72" },
-            { type: "select", name: "estado", label: "Estado", options: RECEIPT_STATUS.options.map((o) => ({ value: o.value, label: o.label })), width: "w-44" },
-            { type: "select", name: "bodega", label: "Bodega", options: warehouses.map((w) => ({ value: w.id, label: w.name })), width: "w-52" },
+            { type: "select", name: "estado", label: "Estado", options: RECEIPT_STATUS.options.map((o) => ({ value: o.value, label: o.label })), width: "w-44", multi: true },
+            { type: "select", name: "bodega", label: "Bodega", options: warehouses.map((w) => ({ value: w.id, label: w.name })), width: "w-52", multi: true },
           ]}
         />
 

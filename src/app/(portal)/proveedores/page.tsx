@@ -4,7 +4,7 @@ import { requireSection } from "@/lib/auth";
 import { QUOTE_OPEN, SIIGO_CUSTOMER, SUPPLIER_ORIGIN } from "@/lib/enums";
 import { siigoCustomersReady } from "@/lib/siigo-clientes";
 import { fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -21,14 +21,14 @@ export default async function ProveedoresPage({ searchParams }: { searchParams: 
   await requireSection("proveedores");
   const sp = await searchParams;
   const q = one(sp.q).trim();
-  const origin = one(sp.origen);
+  const origins = many(sp.origen);
   const siigo = one(sp.siigo);
   const estado = one(sp.estado) || "ACTIVOS";
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const where = {
     ...(estado === "ACTIVOS" ? { active: true } : estado === "INACTIVOS" ? { active: false } : {}),
-    ...(origin ? { origin } : {}),
+    ...(origins.length ? { origin: anyOf(origins) } : {}),
     ...(siigo === "EN_SIIGO" ? { siigoId: { not: null } } : siigo === "RECHAZADO" ? { siigoId: null, siigoError: { not: null } } : siigo === "SIN_ENVIAR" ? { siigoId: null, siigoError: null } : {}),
     ...(q
       ? {
@@ -61,7 +61,7 @@ export default async function ProveedoresPage({ searchParams }: { searchParams: 
     siigoCustomersReady(),
   ]);
 
-  const filtered = Boolean(q || origin || siigo || estado !== "ACTIVOS");
+  const filtered = Boolean(q || origins.length || siigo || estado !== "ACTIVOS");
 
   return (
     <>
@@ -107,7 +107,7 @@ export default async function ProveedoresPage({ searchParams }: { searchParams: 
               options: [{ value: "TODOS", label: "Todos" }, { value: "INACTIVOS", label: "Inactivos" }],
               width: "w-36",
             },
-            { type: "select", name: "origen", label: "Origen", options: SUPPLIER_ORIGIN.options.map((o) => ({ value: o.value, label: o.label })), width: "w-36" },
+            { type: "select", name: "origen", label: "Origen", options: SUPPLIER_ORIGIN.options.map((o) => ({ value: o.value, label: o.label })), width: "w-36", multi: true },
             { type: "select", name: "siigo", label: "Siigo", options: SIIGO_CUSTOMER.options.map((o) => ({ value: o.value, label: o.label })), width: "w-44" },
           ]}
         />

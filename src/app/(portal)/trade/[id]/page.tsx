@@ -6,7 +6,7 @@ import { BASELINE_MONTHS, compliance, tradeImpact, tradePhase } from "@/lib/trad
 import { periodLabel } from "@/lib/sell-out";
 import { TRADE_EXECUTION, TRADE_PHASE, TRADE_STATUS, TRADE_TYPES } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtDateTime, fmtNumber, fmtPct } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EnumBadge, KeyValue, Meter, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -38,10 +38,14 @@ export default async function ActividadDetalle({ params, searchParams }: { param
   });
   if (!activity) notFound();
 
-  const execStatus = one(sp.ejecucion);
-  const city = one(sp.ciudad);
+  const execStatuses = many(sp.ejecucion);
+  const cityFilter = many(sp.ciudad);
   const { page, pageSize, skip, take } = pagination(sp.page, 40);
-  const where = { activityId: id, ...(execStatus ? { status: execStatus } : {}), ...(city ? { store: { city } } : {}) };
+  const where = {
+    activityId: id,
+    ...(execStatuses.length ? { status: anyOf(execStatuses) } : {}),
+    ...(cityFilter.length ? { store: { city: anyOf(cityFilter) } } : {}),
+  };
 
   const [executions, filtered, counts, byCity, outside, impact] = await Promise.all([
     prisma.tradeExecution.findMany({
@@ -206,8 +210,8 @@ export default async function ActividadDetalle({ params, searchParams }: { param
             <div className="px-4 pt-3">
               <Filters
                 fields={[
-                  { type: "select", name: "ejecucion", label: "Todos los resultados", options: TRADE_EXECUTION.options.map((o) => ({ value: o.value, label: o.label })), width: "w-52" },
-                  { type: "select", name: "ciudad", label: "Todas las ciudades", options: cityRows.map(([k]) => ({ value: k, label: k })), width: "w-52" },
+                  { type: "select", name: "ejecucion", label: "Todos los resultados", options: TRADE_EXECUTION.options.map((o) => ({ value: o.value, label: o.label })), width: "w-52", multi: true },
+                  { type: "select", name: "ciudad", label: "Todas las ciudades", options: cityRows.map(([k]) => ({ value: k, label: k })), width: "w-52", multi: true },
                 ]}
               />
             </div>

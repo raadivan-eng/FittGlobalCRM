@@ -5,7 +5,7 @@ import { carrierCapabilities } from "@/lib/carriers";
 import { CARRIERS, providerByKey } from "@/lib/integrations";
 import { SHIPMENT_ACTIVE, SHIPMENT_SOURCE, SHIPMENT_STATUS } from "@/lib/enums";
 import { fmtDate, fmtDateTime, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -23,7 +23,7 @@ export default async function GuiasPage({ searchParams }: { searchParams: Search
   const sp = await searchParams;
   const q = one(sp.q).trim();
   const status = one(sp.estado);
-  const carrier = one(sp.transportadora);
+  const carriers = many(sp.transportadora);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const statusFilter =
@@ -31,7 +31,7 @@ export default async function GuiasPage({ searchParams }: { searchParams: Search
 
   const where = {
     ...statusFilter,
-    ...(carrier ? { carrier } : {}),
+    ...(carriers.length ? { carrier: anyOf(carriers) } : {}),
     ...(q
       ? {
           OR: [
@@ -162,6 +162,7 @@ export default async function GuiasPage({ searchParams }: { searchParams: Search
               type: "select", name: "transportadora", label: "Transportadora",
               options: CARRIERS.map((c) => ({ value: c.key, label: c.name })),
               width: "w-48",
+              multi: true,
             },
           ]}
         />
@@ -170,9 +171,9 @@ export default async function GuiasPage({ searchParams }: { searchParams: Search
           {shipments.length === 0 ? (
             <EmptyState
               icon={<IconTruck size={26} />}
-              title={total === 0 && !q && !status && !carrier ? "Todavía no hay guías" : "Ninguna guía coincide"}
+              title={total === 0 && !q && !status && !carriers.length ? "Todavía no hay guías" : "Ninguna guía coincide"}
               description={
-                total === 0 && !q && !status && !carrier
+                total === 0 && !q && !status && !carriers.length
                   ? "Registra la primera guía de un despacho para empezar a seguirla."
                   : "Prueba con otro número, estado o transportadora."
               }

@@ -4,7 +4,7 @@ import { requireSection, SUPPLIER_ROLES } from "@/lib/auth";
 import { QUOTE_OPEN, QUOTE_STATUS } from "@/lib/enums";
 import { lineComplete, totalLeadDays } from "@/lib/suppliers";
 import { daysBetween, fmtNumber, relativeDays } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -21,7 +21,10 @@ export default async function CotizacionesPage({ searchParams }: { searchParams:
   const sp = await searchParams;
   const q = one(sp.q).trim();
   const status = one(sp.estado);
-  const owner = one(sp.responsable);
+  // «Sin asignar» se puede combinar con responsables concretos: va como OR con `ownerId: null`.
+  const ownerParams = many(sp.responsable);
+  const unassigned = ownerParams.includes("SIN_ASIGNAR");
+  const ownerIds = ownerParams.filter((o) => o !== "SIN_ASIGNAR");
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const now = new Date();
@@ -29,7 +32,14 @@ export default async function CotizacionesPage({ searchParams }: { searchParams:
 
   const where = {
     ...(status === "ABIERTAS" ? { status: { in: [...QUOTE_OPEN] } } : status ? { status } : {}),
-    ...(owner === "SIN_ASIGNAR" ? { ownerId: null } : owner ? { ownerId: owner } : {}),
+    // Va en AND para no chocar con el OR de la búsqueda.
+    ...(unassigned && ownerIds.length
+      ? { AND: [{ OR: [{ ownerId: null }, { ownerId: { in: ownerIds } }] }] }
+      : unassigned
+        ? { ownerId: null }
+        : ownerIds.length
+          ? { ownerId: anyOf(ownerIds) }
+          : {}),
     ...(q
       ? {
           OR: [
@@ -72,7 +82,7 @@ export default async function CotizacionesPage({ searchParams }: { searchParams:
   const openTotal = open.reduce((s, r) => s + r._count, 0);
   const negotiating = open.find((r) => r.status === "NEGOCIACION")?._count ?? 0;
   const closed = approved + discarded;
-  const filtered = Boolean(q || status || owner);
+  const filtered = Boolean(q || status || ownerParams.length);
 
   return (
     <>
@@ -111,6 +121,7 @@ export default async function CotizacionesPage({ searchParams }: { searchParams:
               type: "select", name: "responsable", label: "Responsable",
               options: [{ value: "SIN_ASIGNAR", label: "Sin asignar" }, ...owners.map((u) => ({ value: u.id, label: u.name }))],
               width: "w-48",
+              multi: true,
             },
           ]}
         />

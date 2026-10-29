@@ -6,7 +6,7 @@ import { leadForecasts, periodKey, startOfMonth } from "@/lib/analytics";
 import { CONNECTION_STATUS, LEAD_ENTRIES, LEAD_OPEN, LEAD_SOURCES, LEAD_STATUS, LEAD_TEMPERATURE } from "@/lib/enums";
 import { closePeriodOptions, channelToken, LEAD_ROLES } from "@/lib/leads";
 import { daysBetween, fmtCompact, fmtMoney, fmtNumber, fmtPeriod, relativeDays } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -24,9 +24,12 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
   const sp = await searchParams;
   const q = one(sp.q).trim();
   const status = one(sp.estado);
-  const temperature = one(sp.temperatura);
-  const source = one(sp.origen);
-  const owner = one(sp.responsable);
+  const temperatures = many(sp.temperatura);
+  const sources = many(sp.origen);
+  // «Sin asignar» se puede combinar con responsables concretos: va como OR con `ownerId: null`.
+  const ownerParams = many(sp.responsable);
+  const unassigned = ownerParams.includes("SIN_ASIGNAR");
+  const ownerIds = ownerParams.filter((o) => o !== "SIN_ASIGNAR");
   const close = one(sp.cierre);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
@@ -36,9 +39,16 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
 
   const where = {
     ...(status === "ABIERTOS" ? { status: { in: [...LEAD_OPEN] } } : status ? { status } : {}),
-    ...(temperature ? { temperature } : {}),
-    ...(source ? { source } : {}),
-    ...(owner === "SIN_ASIGNAR" ? { ownerId: null } : owner ? { ownerId: owner } : {}),
+    ...(temperatures.length ? { temperature: anyOf(temperatures) } : {}),
+    ...(sources.length ? { source: anyOf(sources) } : {}),
+    // Va en AND para no chocar con el OR de la búsqueda.
+    ...(unassigned && ownerIds.length
+      ? { AND: [{ OR: [{ ownerId: null }, { ownerId: { in: ownerIds } }] }] }
+      : unassigned
+        ? { ownerId: null }
+        : ownerIds.length
+          ? { ownerId: anyOf(ownerIds) }
+          : {}),
     ...(close ? { closePeriod: close } : {}),
     ...(q
       ? {
@@ -84,7 +94,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
   const fresh = open.find((r) => r.status === "NUEVO")?._count ?? 0;
   const month = monthLeads.get(currentPeriod)!;
   const closed = won + lost;
-  const filtered = Boolean(q || status || temperature || source || owner || close);
+  const filtered = Boolean(q || status || temperatures.length || sources.length || ownerParams.length || close);
 
   // Las URLs de los canales se arman con el host por el que se entró: así sirven
   // igual en producción que en una vista previa.
@@ -163,12 +173,13 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
               options: [{ value: "ABIERTOS", label: "Abiertos (todos)" }, ...LEAD_STATUS.options.map((o) => ({ value: o.value, label: o.label }))],
               width: "w-48",
             },
-            { type: "select", name: "temperatura", label: "Temperatura", options: LEAD_TEMPERATURE.options.map((o) => ({ value: o.value, label: o.label })), width: "w-40" },
-            { type: "select", name: "origen", label: "Origen", options: LEAD_SOURCES.options.map((o) => ({ value: o.value, label: o.label })), width: "w-40" },
+            { type: "select", name: "temperatura", label: "Temperatura", options: LEAD_TEMPERATURE.options.map((o) => ({ value: o.value, label: o.label })), width: "w-40", multi: true },
+            { type: "select", name: "origen", label: "Origen", options: LEAD_SOURCES.options.map((o) => ({ value: o.value, label: o.label })), width: "w-40", multi: true },
             {
               type: "select", name: "responsable", label: "Responsable",
               options: [{ value: "SIN_ASIGNAR", label: "Sin asignar" }, ...owners.map((u) => ({ value: u.id, label: u.name }))],
               width: "w-48",
+              multi: true,
             },
             {
               type: "select", name: "cierre", label: "Mes de cierre",

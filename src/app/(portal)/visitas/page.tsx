@@ -5,7 +5,7 @@ import { startOfMonth, fieldKpis } from "@/lib/analytics";
 import { VISIT_STATUS } from "@/lib/enums";
 import { fmtDate, fmtNumber, fmtTime } from "@/lib/format";
 import { registrarCheckIn, registrarCheckOut } from "@/lib/actions-field";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -17,8 +17,8 @@ export const dynamic = "force-dynamic";
 export default async function VisitasPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireSection("visitas");
   const sp = await searchParams;
-  const status = one(sp.estado);
-  const merch = one(sp.mercaderista);
+  const statuses = many(sp.estado);
+  const merchIds = many(sp.mercaderista);
   const range = one(sp.rango) || "MES";
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
@@ -36,8 +36,9 @@ export default async function VisitasPage({ searchParams }: { searchParams: Sear
   const isField = user.role === "MERCADERISTA";
   const where = {
     plannedDate: bounds,
-    ...(isField ? { userId: user.id } : merch ? { userId: merch } : {}),
-    ...(status ? { status } : {}),
+    // Un mercaderista sólo ve su propia agenda, aunque la URL traiga otro filtro.
+    ...(isField ? { userId: user.id } : merchIds.length ? { userId: anyOf(merchIds) } : {}),
+    ...(statuses.length ? { status: anyOf(statuses) } : {}),
   };
 
   const [visits, total, team, kpis] = await Promise.all([
@@ -54,7 +55,7 @@ export default async function VisitasPage({ searchParams }: { searchParams: Sear
     }),
     prisma.visit.count({ where }),
     prisma.user.findMany({ where: { role: "MERCADERISTA", active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
-    fieldKpis(startOfMonth(0, now), startOfMonth(1, now), isField ? user.id : merch || undefined),
+    fieldKpis(startOfMonth(0, now), startOfMonth(1, now), isField ? user.id : merchIds),
   ]);
 
   return (
@@ -83,8 +84,8 @@ export default async function VisitasPage({ searchParams }: { searchParams: Sear
                 { value: "PROXIMAS", label: "Próximas" },
               ],
             },
-            { type: "select", name: "estado", label: "Estado", options: VISIT_STATUS.options.map((o) => ({ value: o.value, label: o.label })) },
-            ...(isField ? [] : [{ type: "select" as const, name: "mercaderista", label: "Mercaderista", options: team.map((t) => ({ value: t.id, label: t.name })), width: "w-48" }]),
+            { type: "select", name: "estado", label: "Estado", options: VISIT_STATUS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+            ...(isField ? [] : [{ type: "select" as const, name: "mercaderista", label: "Mercaderista", options: team.map((t) => ({ value: t.id, label: t.name })), width: "w-48", multi: true }]),
           ]}
         />
 

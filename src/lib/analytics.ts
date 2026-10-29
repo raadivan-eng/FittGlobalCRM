@@ -366,8 +366,10 @@ export async function expiryReport(maxDays = 90) {
 
 /* ────────────────────────  Operación en calle  ─────────────────────────── */
 
-export async function fieldKpis(from: Date, to: Date, userId?: string) {
-  const scope = userId ? { userId } : {};
+export async function fieldKpis(from: Date, to: Date, userId?: string | string[]) {
+  // Uno o varios mercaderistas; sin ninguno, todo el equipo.
+  const ids = (Array.isArray(userId) ? userId : [userId]).filter((id): id is string => Boolean(id));
+  const scope = ids.length ? { userId: { in: ids } } : {};
 
   const [planned, completed, missed, incidents, shelf, durations] = await Promise.all([
     prisma.visit.count({ where: { plannedDate: { gte: from, lt: to }, ...scope } }),
@@ -375,7 +377,7 @@ export async function fieldKpis(from: Date, to: Date, userId?: string) {
     prisma.visit.count({ where: { plannedDate: { gte: from, lt: to }, status: "NO_REALIZADA", ...scope } }),
     prisma.incident.groupBy({
       by: ["severity"],
-      where: { status: { in: ["ABIERTA", "EN_PROCESO"] }, ...(userId ? { reportedById: userId } : {}) },
+      where: { status: { in: ["ABIERTA", "EN_PROCESO"] }, ...(ids.length ? { reportedById: { in: ids } } : {}) },
       _count: true,
     }),
     prisma.shelfReport.groupBy({

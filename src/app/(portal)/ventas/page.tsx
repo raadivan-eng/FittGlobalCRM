@@ -4,7 +4,7 @@ import { requireSection } from "@/lib/auth";
 import { NOT_VOID, periodKey, periodShort, receivables, startOfMonth } from "@/lib/analytics";
 import { COMPANY_TYPES, INVOICE_STATUS, ORDER_STATUS } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtDateShort, fmtMoney, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, parseDay, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, parseDay, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { LineChart } from "@/components/charts";
 import { Pagination } from "@/components/pagination";
@@ -37,11 +37,11 @@ function chartBuckets(from: Date, to: Date) {
 export default async function VentasPage({ searchParams }: { searchParams: SearchParams }) {
   await requireSection("ventas");
   const sp = await searchParams;
-  const statusParam = one(sp.estado);
+  const statuses = many(sp.estado);
   // Un estado de factura en la URL (p. ej. desde el panel) abre directamente esa vista.
-  const view = one(sp.vista) || (statusParam && INVOICE_STATES.has(statusParam) ? "facturas" : "pedidos");
-  const companyId = one(sp.cliente);
-  const companyType = one(sp.tipo);
+  const view = one(sp.vista) || (statuses.length && statuses.every((s) => INVOICE_STATES.has(s)) ? "facturas" : "pedidos");
+  const companyIds = many(sp.cliente);
+  const companyTypes = many(sp.tipo);
   // Por defecto la facturación descuenta las notas crédito: es la venta real.
   const grossOnly = one(sp.nc) === "sin";
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
@@ -66,8 +66,8 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
 
   const dateRange = (from: Date | null, to: Date | null) => ({ ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) });
   const byCompany = {
-    ...(companyId ? { companyId } : {}),
-    ...(companyType ? { company: { type: companyType } } : {}),
+    ...(companyIds.length ? { companyId: anyOf(companyIds) } : {}),
+    ...(companyTypes.length ? { company: { type: anyOf(companyTypes) } } : {}),
   };
 
   const [billed, credited, cart, chartInvoices, chartCredits, companies, orderStats] = await Promise.all([
@@ -78,7 +78,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
     grossOnly
       ? Promise.resolve([])
       : prisma.creditNote.findMany({ where: { ...byCompany, issueDate: { gte: chartFrom, lt: chartTo } }, select: { issueDate: true, net: true } }),
-    prisma.company.findMany({ where: { active: true, ...(companyType ? { type: companyType } : {}) }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.company.findMany({ where: { active: true, ...(companyTypes.length ? { type: anyOf(companyTypes) } : {}) }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.salesOrder.aggregate({ where: { ...byCompany, date: dateRange(periodFrom, periodTo), status: NOT_VOID }, _count: true, _sum: { net: true } }),
   ]);
 
@@ -99,15 +99,17 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
   const avgTicket = orderStats._count ? (orderStats._sum.net ?? 0) / orderStats._count : 0;
   const periodWord = hasRange ? "período" : "mes";
 
+  const orderStatuses = statuses.filter((s) => !INVOICE_STATES.has(s));
+  const invoiceStatuses = statuses.filter((s) => INVOICE_STATES.has(s));
   const orderWhere = {
     ...byCompany,
     ...(hasRange ? { date: dateRange(fromDay, rangeEnd) } : {}),
-    ...(statusParam && !INVOICE_STATES.has(statusParam) ? { status: statusParam } : {}),
+    ...(orderStatuses.length ? { status: anyOf(orderStatuses) } : {}),
   };
   const invoiceWhere = {
     ...byCompany,
     ...(hasRange ? { issueDate: dateRange(fromDay, rangeEnd) } : {}),
-    ...(statusParam && INVOICE_STATES.has(statusParam) ? { status: statusParam } : {}),
+    ...(invoiceStatuses.length ? { status: anyOf(invoiceStatuses) } : {}),
   };
   const creditWhere = {
     ...byCompany,
@@ -215,8 +217,9 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
               name: "tipo",
               label: "Tipo de cliente",
               options: COMPANY_TYPES.options.map((o) => ({ value: o.value, label: o.label })),
+              multi: true,
             },
-            { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-60" },
+            { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-60", multi: true },
             {
               type: "select",
               name: "nc",
@@ -232,6 +235,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
                     name: "estado",
                     label: "Estado",
                     options: (view === "pedidos" ? ORDER_STATUS.options : INVOICE_STATUS.options).map((o) => ({ value: o.value, label: o.label })),
+                    multi: true,
                   },
                 ]),
           ]}

@@ -74,3 +74,4 @@ export const IconQuote = base('<rect x="5" y="3.5" width="14" height="18" rx="2"
 export const IconCart = base('<path d="M2.5 3.5h2.6l2.3 11.2a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.4-1.1l1.8-6.8H6.2"/><circle cx="9.5" cy="20" r="1.4"/><circle cx="17.5" cy="20" r="1.4"/>');
 export const IconOrder = base('<path d="M6 2.5h9l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V4a1.5 1.5 0 0 1 1-1.5Z"/><path d="M14.5 2.5V7h4.5"/><path d="M8.5 12h7M8.5 15.5h7M8.5 8.5h3"/>');
 export const IconFactory = base('<path d="M3 21V10l5 3V10l5 3V10l5 3V4h3v17z"/><path d="M2 21h20"/><path d="M7 17h2M12 17h2"/>');
+export const IconBookmark = base('<path d="M6.5 3.5h11a1 1 0 0 1 1 1v16l-6.5-4.2-6.5 4.2v-16a1 1 0 0 1 1-1Z"/>');

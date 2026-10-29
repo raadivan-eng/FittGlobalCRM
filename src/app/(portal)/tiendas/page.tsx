@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
 import { GEO_STATUS, STORE_FORMATS, TIERS } from "@/lib/enums";
 import { fmtNumber, relativeDays } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -16,10 +16,10 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
   const user = await requireSection("tiendas");
   const sp = await searchParams;
   const q = one(sp.q);
-  const zone = one(sp.zona);
-  const format = one(sp.formato);
-  const tier = one(sp.tier);
-  const companyId = one(sp.cliente);
+  const zoneFilter = many(sp.zona);
+  const formats = many(sp.formato);
+  const tiers = many(sp.tier);
+  const companyIds = many(sp.cliente);
   const estado = one(sp.estado);
   const ubicacion = one(sp.ubicacion);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
@@ -31,10 +31,10 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
     active: estado !== "inactivas",
     ...scopedToUser,
     ...(q ? { OR: [{ name: { contains: q } }, { code: { contains: q } }, { address: { contains: q } }] } : {}),
-    ...(zone ? { zone } : {}),
-    ...(format ? { format } : {}),
-    ...(tier ? { tier } : {}),
-    ...(companyId ? { companyId } : {}),
+    ...(zoneFilter.length ? { zone: anyOf(zoneFilter) } : {}),
+    ...(formats.length ? { format: anyOf(formats) } : {}),
+    ...(tiers.length ? { tier: anyOf(tiers) } : {}),
+    ...(companyIds.length ? { companyId: anyOf(companyIds) } : {}),
     ...(ubicacion === "sin" ? { lat: null } : ubicacion === "con" ? { lat: { not: null } } : {}),
   };
   const canImport = ["ADMIN", "SUPERVISOR"].includes(user.role);
@@ -94,10 +94,10 @@ export default async function TiendasPage({ searchParams }: { searchParams: Sear
       <Filters
         fields={[
           { type: "search", name: "q", placeholder: "Nombre, código o dirección…" },
-          { type: "select", name: "zona", label: "Zona", options: zones.map((z) => ({ value: z.zone, label: z.zone })) },
-          { type: "select", name: "formato", label: "Formato", options: STORE_FORMATS.options.map((o) => ({ value: o.value, label: o.label })) },
-          { type: "select", name: "tier", label: "ABC", options: TIERS.options.map((o) => ({ value: o.value, label: o.label })) },
-          { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-52" },
+          { type: "select", name: "zona", label: "Zona", options: zones.map((z) => ({ value: z.zone, label: z.zone })), multi: true },
+          { type: "select", name: "formato", label: "Formato", options: STORE_FORMATS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+          { type: "select", name: "tier", label: "ABC", options: TIERS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+          { type: "select", name: "cliente", label: "Cliente", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-52", multi: true },
           { type: "select", name: "ubicacion", label: "Ubicación", options: [{ value: "con", label: "Con coordenadas" }, { value: "sin", label: "Sin ubicar" }] },
           { type: "select", name: "estado", label: "Estado", options: [{ value: "inactivas", label: "No visitables" }] },
         ]}

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
 import { fmtDate, fmtNumber, initials } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, PageHeader } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -15,7 +15,7 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
   await requireSection("contactos");
   const sp = await searchParams;
   const q = one(sp.q);
-  const companyId = one(sp.cliente);
+  const companyIds = many(sp.cliente);
   const scope = one(sp.ambito); // CORPORATIVO | TIENDA
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
@@ -23,7 +23,7 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
     ...(q
       ? { OR: [{ firstName: { contains: q } }, { lastName: { contains: q } }, { email: { contains: q } }, { position: { contains: q } }] }
       : {}),
-    ...(companyId ? { companyId } : {}),
+    ...(companyIds.length ? { companyId: anyOf(companyIds) } : {}),
     ...(scope === "CORPORATIVO" ? { stores: { none: {} } } : scope === "TIENDA" ? { stores: { some: {} } } : {}),
   };
 
@@ -50,7 +50,7 @@ export default async function ContactosPage({ searchParams }: { searchParams: Se
       <Filters
         fields={[
           { type: "search", name: "q", placeholder: "Nombre, cargo o correo…" },
-          { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-56" },
+          { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-56", multi: true },
           {
             type: "select",
             name: "ambito",

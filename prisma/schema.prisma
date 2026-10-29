@@ -51,6 +51,7 @@ model User {
   quoteEvents        SupplierQuoteEvent[]
   receiptsCreated    GoodsReceipt[]       @relation("ReceiptCreator")
   receiptsReceived   GoodsReceipt[]       @relation("ReceiptReceiver")
+  savedViews         SavedView[]
 
   @@index([role, active])
 }
@@ -1148,4 +1149,20 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
+}
+
+/// Filtros guardados por un usuario para una página: la query string tal cual,
+/// sin paginación, para reabrir la misma vista con un clic.
+model SavedView {
+  id        String   @id @default(cuid())
+  userId    String
+  path      String // ruta de la página, p. ej. /ventas
+  name      String
+  query     String // query string sin `?` ni `page`
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, path, name])
+  @@index([userId, path])
 }

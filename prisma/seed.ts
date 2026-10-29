@@ -121,6 +121,7 @@ const INCIDENT_TEMPLATES = [
 async function main() {
   console.log("🧹 Limpiando base…");
   await prisma.$transaction([
+    prisma.savedView.deleteMany(),
     prisma.notification.deleteMany(),
     prisma.purchaseOrderLine.deleteMany(),
     prisma.purchaseOrder.deleteMany(),

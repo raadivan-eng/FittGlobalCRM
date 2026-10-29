@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
 import { PURCHASE_ORDER_STATUS } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
-import { flatten, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
@@ -17,14 +17,14 @@ const valor = (lines: { quantity: number; unitCost: number }[]) => lines.reduce(
 export default async function OrdenesCompraPage({ searchParams }: { searchParams: SearchParams }) {
   await requireSection("compras");
   const sp = await searchParams;
-  const status = one(sp.estado);
-  const supplierId = one(sp.proveedor);
+  const statuses = many(sp.estado);
+  const supplierIds = many(sp.proveedor);
   const q = one(sp.q).trim();
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const where = {
-    ...(status ? { status } : {}),
-    ...(supplierId ? { supplierId } : {}),
+    ...(statuses.length ? { status: anyOf(statuses) } : {}),
+    ...(supplierIds.length ? { supplierId: anyOf(supplierIds) } : {}),
     ...(q ? { OR: [{ code: { contains: q } }, { supplier: { name: { contains: q } } }] } : {}),
   };
 
@@ -48,7 +48,7 @@ export default async function OrdenesCompraPage({ searchParams }: { searchParams
   const drafts = open.filter((o) => o.status === "BORRADOR");
   const issued = open.filter((o) => o.status === "EMITIDA");
   const late = issued.filter((o) => o.expectedAt && o.expectedAt < now);
-  const empty = total === 0 && !status && !supplierId && !q;
+  const empty = total === 0 && !statuses.length && !supplierIds.length && !q;
 
   return (
     <>
@@ -73,8 +73,8 @@ export default async function OrdenesCompraPage({ searchParams }: { searchParams
         <Filters
           fields={[
             { type: "search", name: "q", placeholder: "Código o proveedor…" },
-            { type: "select", name: "estado", label: "Todos los estados", options: PURCHASE_ORDER_STATUS.options.map((o) => ({ value: o.value, label: o.label })) },
-            { type: "select", name: "proveedor", label: "Todos los proveedores", options: suppliers.map((s) => ({ value: s.id, label: s.name })) },
+            { type: "select", name: "estado", label: "Todos los estados", options: PURCHASE_ORDER_STATUS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+            { type: "select", name: "proveedor", label: "Todos los proveedores", options: suppliers.map((s) => ({ value: s.id, label: s.name })), multi: true },
           ]}
         />
         <Card>

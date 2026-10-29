@@ -23,3 +23,23 @@ export function parseDay(raw: string | string[] | undefined) {
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+/**
+ * Lee un filtro de selección múltiple: la URL guarda los valores separados por
+ * coma (`?cliente=a,b`). Una coma dentro de un valor viaja escapada (`\\,`),
+ * así «Bogotá, D.C.» no se parte en dos. Devuelve una lista vacía si no hay filtro.
+ */
+export function many(raw: string | string[] | undefined) {
+  return splitList(one(raw));
+}
+
+export const splitList = (raw: string) =>
+  raw
+    .split(/(?<!\\),/)
+    .map((v) => v.replace(/\\,/g, ",").trim())
+    .filter(Boolean);
+
+export const joinList = (values: string[]) => values.map((v) => v.replace(/,/g, "\\,")).join(",");
+
+/** Condición Prisma para un filtro múltiple; `undefined` si no filtra nada. */
+export const anyOf = (values: string[]) => (values.length ? { in: values } : undefined);

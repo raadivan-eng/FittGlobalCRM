@@ -6,7 +6,7 @@ import {
   sellInUnits, storePerformance,
 } from "@/lib/sell-out";
 import { fmtCompact, fmtDateTime, fmtNumber, fmtPeriod } from "@/lib/format";
-import { one, type SearchParams } from "@/lib/params";
+import { anyOf, many, one, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, Delta, EmptyState, PageHeader, StatTile } from "@/components/ui";
 import { Filters } from "@/components/filters";
 import { GroupedBarChart, LineChart, RankingBars } from "@/components/charts";
@@ -36,13 +36,14 @@ function periodRange(periods: string[]) {
 export default async function SellOutPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireSection("sellout");
   const sp = await searchParams;
-  const companyId = one(sp.cliente) || undefined;
+  const companyIds = many(sp.cliente);
+  const byCompany = companyIds.length ? { companyId: anyOf(companyIds) } : {};
 
   const [periodRows, companyRows, imports] = await Promise.all([
-    prisma.sellOut.groupBy({ by: ["period"], where: companyId ? { companyId } : {}, orderBy: { period: "desc" } }),
+    prisma.sellOut.groupBy({ by: ["period"], where: byCompany, orderBy: { period: "desc" } }),
     prisma.sellOut.groupBy({ by: ["companyId"] }),
     prisma.sellOutImport.findMany({
-      where: companyId ? { companyId } : {},
+      where: byCompany,
       orderBy: { createdAt: "desc" },
       take: 6,
       include: { company: { select: { name: true } }, user: { select: { name: true } } },
@@ -92,13 +93,13 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
   const periods = periodsUntil(period, WINDOW);
   const sellThroughPeriods = periodsUntil(period, 3);
 
-  const scopeIds = companyId ? [companyId] : companies.map((c) => c.id);
+  const scopeIds = companyIds.length ? companyIds : companies.map((c) => c.id);
   const [monthly, yearAgo, sellIn, stores, products] = await Promise.all([
-    monthlyByCompany(periods, companyId),
-    monthlyByCompany([lastYear], companyId),
+    monthlyByCompany(periods, companyIds),
+    monthlyByCompany([lastYear], companyIds),
     sellInUnits(periods, scopeIds),
-    companyId ? storePerformance(companyId, period) : Promise.resolve([]),
-    productPerformance(period, companyId),
+    companyIds.length ? storePerformance(companyIds, period) : Promise.resolve([]),
+    productPerformance(period, companyIds),
   ]);
 
   const nameOf = new Map(companies.map((c) => [c.id, c.name]));
@@ -119,8 +120,8 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
 
   // Una serie por cliente en el orden de su venta del mes; pasado el séptimo, «Otros».
   const ranked = [...monthly.entries()].sort((a, b) => (b[1].get(period)?.units ?? 0) - (a[1].get(period)?.units ?? 0));
-  const head = companyId ? ranked : ranked.slice(0, SERIES.length - 1);
-  const tail = companyId ? [] : ranked.slice(SERIES.length - 1);
+  const head = ranked.slice(0, SERIES.length - 1);
+  const tail = ranked.slice(SERIES.length - 1);
   const lineSeries = [
     ...head.map(([id], i) => ({ name: nameOf.get(id) ?? "—", color: SERIES[i] })),
     ...(tail.length ? [{ name: `Otros (${tail.length})`, color: "var(--text-muted)" }] : []),
@@ -174,7 +175,7 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
 
       <Filters
         fields={[
-          { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-64" },
+          { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-64", multi: true },
           { type: "select", name: "mes", label: "Último mes cargado", options: pageMonths.map((p) => ({ value: p, label: fmtPeriod(p) })), width: "w-56" },
         ]}
       />
@@ -200,7 +201,7 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
 
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-2">
         <Card className="min-w-0">
-          <CardHeader title="Unidades vendidas al consumidor" subtitle={`Últimos ${WINDOW} meses${companyId ? "" : " por cliente"}`} />
+          <CardHeader title="Unidades vendidas al consumidor" subtitle={`Últimos ${WINDOW} meses${companyIds.length === 1 ? "" : " por cliente"}`} />
           <div className="px-4 py-3">
             <LineChart data={lineData} series={lineSeries} format="number" area={false} />
           </div>
@@ -272,7 +273,7 @@ export default async function SellOutPage({ searchParams }: { searchParams: Sear
       </Card>
 
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-3">
-        {companyId ? (
+        {companyIds.length ? (
           <>
             <Card>
               <CardHeader title="Tiendas que más rotan" subtitle={`${fmtNumber(selling.length)} con venta en ${fmtPeriod(period)}`} />
