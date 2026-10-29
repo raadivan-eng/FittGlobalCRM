@@ -1166,3 +1166,18 @@ model SavedView {
   @@unique([userId, path, name])
   @@index([userId, path])
 }
+
+/// Movimiento mensual de una cuenta del PUC en el estado de resultados, tal
+/// como lo entrega la contabilidad. Cargar un mes lo reemplaza completo.
+model IncomeStatementLine {
+  id          String   @id @default(cuid())
+  period      String // 2026-01
+  accountCode String // código PUC: 41359503
+  accountName String
+  amount      Float // con el signo del reporte: ingresos y gastos en positivo, devoluciones en negativo
+  source      String   @default("ARCHIVO") // ARCHIVO | SIIGO
+  createdAt   DateTime @default(now())
+
+  @@unique([period, accountCode])
+  @@index([period])
+}

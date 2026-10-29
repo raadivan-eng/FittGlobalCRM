@@ -11,6 +11,7 @@ import { one, type SearchParams } from "@/lib/params";
 import { Badge, Card, CardHeader, PageHeader, StatTile } from "@/components/ui";
 import { CompositionBar, GroupedBarChart, LineChart, RankingBars } from "@/components/charts";
 import { IconAlert, IconArrowRight, IconCart, IconExpiry, IconSales, IconTarget } from "@/components/icons";
+import { GerenciaTabs } from "./tabs";
 
 export const metadata = { title: "Tablero gerencial" };
 export const dynamic = "force-dynamic";
@@ -150,6 +151,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
           </form>
         }
       />
+      <GerenciaTabs active="/gerencia" />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Venta neta" value={fmtCompact(sales1)} delta={change(sales1, netSales(t0))} hint="vs período anterior" icon={<IconSales size={15} />} />

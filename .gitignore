@@ -18,3 +18,7 @@ tsconfig.tsbuildinfo
 .open-next
 .wrangler
 .dev.vars
+
+# Configuración local de Claude Code
+.claude/
+Claude/

@@ -121,6 +121,7 @@ const INCIDENT_TEMPLATES = [
 async function main() {
   console.log("🧹 Limpiando base…");
   await prisma.$transaction([
+    prisma.incomeStatementLine.deleteMany(),
     prisma.savedView.deleteMany(),
     prisma.notification.deleteMany(),
     prisma.purchaseOrderLine.deleteMany(),
@@ -1276,6 +1277,69 @@ async function main() {
     });
   }
   console.log(`🧾 ${ORDENES.length} órdenes de compra`);
+
+  // ── Estado de resultados ───────────────────────────────────────────────────
+  // Lo que reportaría la contabilidad de cada mes cerrado: los ingresos y el
+  // costo salen de la facturación simulada; la nómina es fija y el resto del
+  // gasto se mueve con la venta, para que haya meses buenos y malos.
+  const facturas = await prisma.invoice.findMany({
+    where: { status: { not: "ANULADA" }, issueDate: { lt: new Date(TODAY.getFullYear(), TODAY.getMonth(), 1) } },
+    select: { issueDate: true, net: true, order: { select: { lines: { select: { quantity: true, total: true, product: { select: { category: true, unitCost: true } } } } } } },
+  });
+  const porMes = new Map<string, { alimentos: number; cosmeticos: number; mayor: number; costo: number }>();
+  for (const f of facturas) {
+    const period = `${f.issueDate.getFullYear()}-${String(f.issueDate.getMonth() + 1).padStart(2, "0")}`;
+    const m = porMes.get(period) ?? { alimentos: 0, cosmeticos: 0, mayor: 0, costo: 0 };
+    const lines = f.order?.lines ?? [];
+    const gross = lines.reduce((s, l) => s + l.total, 0) || 1;
+    for (const l of lines) {
+      const venta = (l.total / gross) * f.net;
+      if (l.product.category === "Cuidado Personal") m.cosmeticos += venta;
+      else if (l.product.category === "Aseo Hogar") m.mayor += venta;
+      else m.alimentos += venta;
+      m.costo += l.quantity * l.product.unitCost;
+    }
+    porMes.set(period, m);
+  }
+  const resultados: { period: string; accountCode: string; accountName: string; amount: number }[] = [];
+  for (const [period, m] of porMes) {
+    const ventas = m.alimentos + m.cosmeticos + m.mayor;
+    const cuenta = (accountCode: string, accountName: string, amount: number) => {
+      if (Math.round(amount) !== 0) resultados.push({ period, accountCode, accountName, amount: Math.round(amount * 100) / 100 });
+    };
+    cuenta("41359501", "Comercio al por mayor y al detal", m.mayor);
+    cuenta("41359503", "Venta de Alimentos", m.alimentos);
+    cuenta("41359505", "Venta de productos cosméticos y de tocador", m.cosmeticos);
+    cuenta("41750503", "Devolución en venta de alimentos", -m.alimentos * (0.005 + rnd() * 0.03));
+    cuenta("41750505", "Devolución en venta de productos cosméticos y de tocador", -m.cosmeticos * (0.005 + rnd() * 0.02));
+    cuenta("61359501", "Comercio al por mayor y al por menor", m.costo);
+    cuenta("42104001", "Descuentos comerciales condicionados", ventas * (0.002 + rnd() * 0.006));
+    cuenta("51050601", "Sueldos", 29_500);
+    cuenta("51052701", "Auxilio de transporte", 3_900);
+    cuenta("51053001", "Cesantías", 2_700);
+    cuenta("51053301", "Intereses sobre cesantías", 320);
+    cuenta("51053601", "Prima de servicios", 2_700);
+    cuenta("51053901", "Vacaciones", 1_250);
+    cuenta("51056801", "Aportes a administradora de riesgos laborales", 160);
+    cuenta("51057001", "Aporte a fondos de pensión y/o cesantías", 3_500);
+    cuenta("51057201", "Aportes cajas de compensación familiar", 1_200);
+    cuenta("511025", "Asesoría jurídica", 3_500);
+    cuenta("511035", "Asesoría técnica", 3_800);
+    cuenta("512010", "Construcciones y edificaciones", 5_200);
+    cuenta("513535", "Teléfono", 900);
+    cuenta("515595", "Otros gastos de viaje", ventas * rnd() * 0.006);
+    cuenta("519520", "Gastos de representación y relaciones públicas", rnd() < 0.3 ? 8_000 : 0);
+    cuenta("523550", "Transportes, fletes y acarreos", ventas * (0.035 + rnd() * 0.03));
+    cuenta("52356001", "Publicidad, propaganda y promoción", ventas * (0.008 + rnd() * 0.012));
+    cuenta("529540", "Envases y empaques", ventas * 0.004);
+    cuenta("530505", "Gastos bancarios", 280);
+    cuenta("530515", "Comisiones", ventas * (0.002 + rnd() * 0.004));
+    cuenta("530520", "Intereses", 6_500 + rnd() * 3_000);
+    cuenta("531520", "Impuestos asumidos", ventas * 0.003);
+    cuenta("511505", "Industria y comercio", ventas * 0.0069);
+  }
+  await prisma.incomeStatementLine.createMany({ data: resultados });
+  console.log(`📒 Estado de resultados de ${porMes.size} meses (${resultados.length} cuentas-mes)`);
 
   // ── Conexiones externas ────────────────────────────────────────────────────
   // Se crean vacías a propósito: las credenciales reales las carga el
