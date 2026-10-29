@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  IconAlert, IconBell, IconCart, IconClients, IconContacts, IconDashboard, IconExpiry, IconForecast, IconLead,
+  IconAlert, IconBell, IconCart, IconClients, IconCompass, IconContacts, IconDashboard, IconExpiry, IconForecast, IconLead,
   IconMegaphone, IconMenu, IconOrder, IconPlug, IconReceive, IconRotation, IconShield, IconProduct, IconQuote, IconReports, IconFactory, IconRoute, IconSales, IconStore,
   IconTeam, IconTruck, IconVisit, IconX,
 } from "./icons";
@@ -13,6 +13,10 @@ import { BrandTile } from "./brand-mark";
 type Item = { section: string; href: string; label: string; Icon: typeof IconDashboard };
 
 const GROUPS: { title: string; items: Item[] }[] = [
+  {
+    title: "Gerencia",
+    items: [{ section: "gerencia", href: "/gerencia", label: "Tablero gerencial", Icon: IconCompass }],
+  },
   {
     title: "Comercial",
     items: [

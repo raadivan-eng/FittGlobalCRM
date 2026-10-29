@@ -54,6 +54,7 @@ export const IconEdit = base('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0
 export const IconTrash = base('<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M5.5 7 6.5 20a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1L18.5 7"/><path d="M9 7V4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V7"/>');
 export const IconPhone = base('<path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5Z"/>');
 export const IconMail = base('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6 8.5-6"/>');
+export const IconCompass = base('<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/>');
 export const IconTarget = base('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>');
 export const IconReceive = base('<path d="M3.5 8.5 12 4l8.5 4.5V19a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M12 9v7"/><path d="m8.8 12.8 3.2 3.2 3.2-3.2"/>');
 export const IconExpiry = base('<circle cx="12" cy="13" r="8"/><path d="M12 9v4.2l2.8 1.6"/><path d="M9 2.5h6"/><path d="m19.5 6.5 1.5-1.5"/>');
