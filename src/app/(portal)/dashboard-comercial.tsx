@@ -20,7 +20,7 @@ const BAND_COLOR: Record<string, string> = {
   SANO: "var(--good)",
 };
 
-export async function DashboardComercial({ userName }: { userName: string }) {
+export async function DashboardComercial({ userName, credits }: { userName: string; credits: boolean }) {
   const now = new Date();
   const monthStart = startOfMonth(0, now);
   const nextMonth = startOfMonth(1, now);
@@ -35,9 +35,9 @@ export async function DashboardComercial({ userName }: { userName: string }) {
     mtd, prevMtd, series, forecastMonth, leadsMonth, expiry, cover, field, cart,
     products, companies, stores, criticalIncidents, activeCounts,
   ] = await Promise.all([
-    billedBetween(monthStart, nextMonth),
-    billedBetween(prevMonth, prevSameSpan),
-    forecastVsBilling(12),
+    billedBetween(monthStart, nextMonth, undefined, credits),
+    billedBetween(prevMonth, prevSameSpan, undefined, credits),
+    forecastVsBilling(12, credits),
     companyForecasts([periodKey(monthStart)], undefined, { criteria }),
     leadForecasts([periodKey(monthStart)], criteria),
     expiryReport(),
@@ -45,7 +45,7 @@ export async function DashboardComercial({ userName }: { userName: string }) {
     fieldKpis(monthStart, nextMonth),
     receivables(),
     topProducts(quarterStart, nextMonth, 7),
-    topCompanies(quarterStart, nextMonth, 7),
+    topCompanies(quarterStart, nextMonth, 7, credits),
     topStores(quarterStart, nextMonth, 7),
     prisma.incident.findMany({
       where: { status: { in: ["ABIERTA", "EN_PROCESO"] }, severity: { in: ["CRITICA", "ALTA"] } },
@@ -81,9 +81,9 @@ export async function DashboardComercial({ userName }: { userName: string }) {
             label="Facturado en el mes"
             value={fmtCompact(mtd.total)}
             delta={delta}
-            hint={`vs. ${fmtCompact(prevMtd.total)} al día ${dayOfMonth} del mes anterior`}
+            hint={`${credits ? "Menos notas crédito · " : ""}vs. ${fmtCompact(prevMtd.total)} al día ${dayOfMonth} del mes anterior`}
             icon={<IconSales size={15} />}
-            href="/ventas"
+            href={credits ? "/ventas" : "/ventas?nc=sin"}
           />
           <StatTile
             label="Avance del forecast"

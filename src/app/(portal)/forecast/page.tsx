@@ -2,11 +2,12 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { clientStatuses, companyForecasts, forecastVsBilling, getForecastCriteria, leadForecasts, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
+import { clientStatuses, companyForecasts, creditsByCompany, forecastVsBilling, getForecastCriteria, leadForecasts, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
 import { criteriaWindow, describeCriteria, describeLeads } from "@/lib/forecast-criteria";
 import { CLIENT_INACTIVITY, FORECAST_SOURCE, LEAD_SOURCES, LEAD_STATUS, LEAD_TEMPERATURE, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtMoney, fmtNumber, fmtPeriod } from "@/lib/format";
-import { one, type SearchParams } from "@/lib/params";
+import { netOfCredits, one, type SearchParams } from "@/lib/params";
+import { CreditNotesSelect } from "@/components/filters";
 import { Card, CardHeader, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { GroupedBarChart, RankingBars } from "@/components/charts";
 import { ForecastCell } from "./forecast-cell";
@@ -36,8 +37,9 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
   const editable = ["ADMIN", "COMERCIAL"].includes(user.role);
   const criteria = await getForecastCriteria();
   const months = criteriaWindow(period, criteria, now).periods;
+  const credits = netOfCredits(sp);
 
-  const [companies, forecasts, invoices, series, productForecasts, productSales, exclusions, leadsByPeriod, statuses] = await Promise.all([
+  const [companies, forecasts, invoices, credited, series, productForecasts, productSales, exclusions, leadsByPeriod, statuses] = await Promise.all([
     prisma.company.findMany({
       where: { active: true },
       orderBy: { name: "asc" },
@@ -49,7 +51,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
       where: { issueDate: { gte: selected.start, lt: selected.end }, status: NOT_VOID },
       _sum: { net: true },
     }),
-    forecastVsBilling(12),
+    creditsByCompany(selected.start, selected.end, credits),
+    forecastVsBilling(12, credits),
     prisma.forecast.findMany({
       where: { period, productId: { not: null } },
       include: { product: { select: { id: true, name: true, imageEmoji: true } } },
@@ -72,6 +75,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
 
   const fcByCompany = forecasts.get(period)!;
   const realByCompany = new Map(invoices.map((i) => [i.companyId, i._sum.net ?? 0]));
+  // Una nota crédito resta aunque el cliente no haya facturado en el mes.
+  for (const [id, net] of credited) realByCompany.set(id, (realByCompany.get(id) ?? 0) - net);
   const realByProduct = new Map(productSales.map((p) => [p.productId, p._sum.total ?? 0]));
 
   const isPast = selected.end <= now;
@@ -152,6 +157,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                 </option>
               ))}
             </select>
+            <CreditNotesSelect net={credits} />
             <button className="btn btn-secondary">Ver período</button>
           </form>
         }
@@ -160,7 +166,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Forecast del período" value={fmtCompact(totalForecast)} hint={`${fmtNumber(rows.filter((r) => r.forecast > 0).length)} clientes${hotLeads.leads.length ? ` + ${fmtNumber(hotLeads.leads.length)} leads` : " con proyección"}${newBusiness ? " + nuevos" : ""}${inactiveCount ? ` · ${fmtNumber(inactiveCount)} inactivos fuera` : ""}`} icon={<IconForecast size={15} />} />
-        <StatTile label="Facturación real" value={fmtCompact(totalReal)} hint={isCurrent ? "Mes en curso, aún parcial" : isPast ? "Período cerrado" : "Período futuro, sin facturación"} icon={<IconSales size={15} />} />
+        <StatTile label="Facturación real" value={fmtCompact(totalReal)} hint={`${isCurrent ? "Mes en curso, aún parcial" : isPast ? "Período cerrado" : "Período futuro, sin facturación"}${credits ? " · menos notas crédito" : ""}`} icon={<IconSales size={15} />} />
         <StatTile
           label="Avance"
           value={measurable ? `${totalProgress.toFixed(0)}%` : "—"}

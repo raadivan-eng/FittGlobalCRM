@@ -43,3 +43,9 @@ export const joinList = (values: string[]) => values.map((v) => v.replace(/,/g, 
 
 /** Condición Prisma para un filtro múltiple; `undefined` si no filtra nada. */
 export const anyOf = (values: string[]) => (values.length ? { in: values } : undefined);
+
+/**
+ * Toda vista de facturación descuenta las notas crédito: es la venta real.
+ * `?nc=sin` la muestra emitida, sin descontarlas.
+ */
+export const netOfCredits = (sp: Record<string, string | string[] | undefined>) => one(sp.nc) !== "sin";

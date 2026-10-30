@@ -11,6 +11,8 @@ import { CHANNELS, CLIENT_INACTIVITY, CLIENT_STATUS, COMPANY_TYPES, INVOICE_STAT
 import { enviarClienteASiigo } from "@/lib/actions-leads";
 import { parseTaxData, taxSummary } from "@/lib/rut";
 import { fmtCompact, fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
+import { netOfCredits, type SearchParams } from "@/lib/params";
+import { CreditNotesSelect } from "@/components/filters";
 import { Card, CardHeader, EnumBadge, KeyValue, PageHeader, StatTile } from "@/components/ui";
 import { GroupedBarChart, RankingBars } from "@/components/charts";
 import { IconBuilding, IconMail, IconPhone, IconSales, IconStore, IconTarget } from "@/components/icons";
@@ -23,9 +25,10 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return { title: c?.name ?? "Cliente" };
 }
 
-export default async function ClienteDetalle({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClienteDetalle({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SearchParams }) {
   const user = await requireSection("clientes");
   const { id } = await params;
+  const credits = netOfCredits(await searchParams);
 
   const company = await prisma.company.findUnique({
     where: { id },
@@ -53,11 +56,12 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
   const since = range[0].start;
 
   const criteria = await getForecastCriteria();
-  const [invoices, forecasts, statuses, orders, pending, topSkus, owners] = await Promise.all([
+  const [invoices, creditNotes, forecasts, statuses, orders, pending, topSkus, owners] = await Promise.all([
     prisma.invoice.findMany({
       where: { companyId: id, issueDate: { gte: since }, status: NOT_VOID },
       select: { issueDate: true, net: true },
     }),
+    credits ? prisma.creditNote.findMany({ where: { companyId: id, issueDate: { gte: since } }, select: { issueDate: true, net: true } }) : [],
     companyForecasts(range.map((r) => r.period), id, { criteria }),
     clientStatuses([id], criteria),
     prisma.salesOrder.findMany({
@@ -87,9 +91,11 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
 
   const realByPeriod = new Map<string, number>();
   for (const i of invoices) realByPeriod.set(periodKey(i.issueDate), (realByPeriod.get(periodKey(i.issueDate)) ?? 0) + i.net);
+  for (const n of creditNotes) realByPeriod.set(periodKey(n.issueDate), (realByPeriod.get(periodKey(n.issueDate)) ?? 0) - n.net);
   const fcByPeriod = new Map(range.map((r) => [r.period, forecasts.get(r.period)?.get(id)?.amount ?? 0]));
 
-  const billed12 = invoices.reduce((s, i) => s + i.net, 0);
+  const credited12 = creditNotes.reduce((s, n) => s + n.net, 0);
+  const billed12 = invoices.reduce((s, i) => s + i.net, 0) - credited12;
   const owed = pending.reduce((s, i) => s + (i.total - i.paidAmount), 0);
   const overdue = pending.filter((i) => i.dueDate < new Date()).reduce((s, i) => s + (i.total - i.paidAmount), 0);
   const currentPeriod = periodKey(startOfMonth(0));
@@ -120,6 +126,10 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
             </span>
             <EnumBadge option={TIERS.get(company.tier)} />
             {canEditClient && <ClientStatusControl companyId={company.id} companyName={company.name} manual={status.inactive === "MANUAL"} />}
+            <form className="flex items-center gap-2">
+              <CreditNotesSelect net={credits} />
+              <button className="btn btn-secondary">Aplicar</button>
+            </form>
             <Link href={`/tiendas?cliente=${company.id}`} className="btn btn-secondary">
               <IconStore size={15} /> Ver tiendas
             </Link>
@@ -128,7 +138,7 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Facturación 12 meses" value={fmtCompact(billed12)} hint={`${invoices.length} facturas emitidas`} icon={<IconSales size={15} />} />
+        <StatTile label="Facturación 12 meses" value={fmtCompact(billed12)} hint={`${invoices.length} facturas emitidas${credited12 ? ` menos ${fmtCompact(credited12)} en notas crédito` : ""}`} icon={<IconSales size={15} />} />
         <StatTile
           label="Mes en curso"
           value={fmtCompact(monthReal)}

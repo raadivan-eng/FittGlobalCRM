@@ -4,7 +4,8 @@ import { requireSection } from "@/lib/auth";
 import { NOT_VOID, startOfMonth, topCategories, topCompanies, topProducts, topStores } from "@/lib/analytics";
 import { CHANNELS, INCIDENT_TYPES, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtNumber, fmtPct } from "@/lib/format";
-import { one, type SearchParams } from "@/lib/params";
+import { netOfCredits, one, type SearchParams } from "@/lib/params";
+import { CreditNotesSelect } from "@/components/filters";
 import { Card, CardHeader, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { CompositionBar, RankingBars } from "@/components/charts";
 import { IconAlert, IconReports, IconSales, IconStore } from "@/components/icons";
@@ -37,20 +38,27 @@ export default async function ReportesPage({ searchParams }: { searchParams: Sea
   await requireSection("reportes");
   const sp = await searchParams;
   const win = WINDOWS.find((w) => w.key === one(sp.rango)) ?? WINDOWS[0];
+  const credits = netOfCredits(sp);
 
   const now = new Date();
   const from = startOfMonth(-(win.months - 1), now);
   const to = startOfMonth(1, now);
 
-  const [categories, products, companies, stores, invoices, incidentTypes, zoneVisits, zoneShelf] = await Promise.all([
+  const [categories, products, companies, stores, invoices, creditNotes, incidentTypes, zoneVisits, zoneShelf] = await Promise.all([
     topCategories(from, to),
     topProducts(from, to, 12),
-    topCompanies(from, to, 12),
+    topCompanies(from, to, 12, credits),
     topStores(from, to, 12),
     prisma.invoice.findMany({
       where: { issueDate: { gte: from, lt: to }, status: NOT_VOID },
       select: { net: true, company: { select: { channel: true, tier: true, city: true } } },
     }),
+    credits
+      ? prisma.creditNote.findMany({
+          where: { issueDate: { gte: from, lt: to } },
+          select: { net: true, company: { select: { channel: true, tier: true, city: true } } },
+        })
+      : [],
     prisma.incident.groupBy({ by: ["type"], where: { createdAt: { gte: from, lt: to } }, _count: true }),
     prisma.visit.findMany({
       where: { plannedDate: { gte: from, lt: to } },
@@ -65,7 +73,8 @@ export default async function ReportesPage({ searchParams }: { searchParams: Sea
   const byChannel = new Map<string, number>();
   const byTier = new Map<string, number>();
   const byCity = new Map<string, number>();
-  for (const i of invoices) {
+  // Las notas crédito entran con signo negativo en el mismo canal, ABC y ciudad del cliente.
+  for (const i of [...invoices, ...creditNotes.map((n) => ({ ...n, net: -n.net }))]) {
     byChannel.set(i.company.channel, (byChannel.get(i.company.channel) ?? 0) + i.net);
     byTier.set(i.company.tier, (byTier.get(i.company.tier) ?? 0) + i.net);
     if (i.company.city) byCity.set(i.company.city, (byCity.get(i.company.city) ?? 0) + i.net);
@@ -97,7 +106,8 @@ export default async function ReportesPage({ searchParams }: { searchParams: Sea
     categoryOos.set(s.product.category, acc);
   }
 
-  const totalBilled = invoices.reduce((s, i) => s + i.net, 0);
+  const creditTotal = creditNotes.reduce((s, n) => s + n.net, 0);
+  const totalBilled = invoices.reduce((s, i) => s + i.net, 0) - creditTotal;
   const oosTotal = zoneShelf.filter((s) => s.outOfStock).length;
   const planogramFails = zoneShelf.filter((s) => !s.planogramOk).length;
   const priceFails = zoneShelf.filter((s) => !s.priceTagOk).length;
@@ -114,13 +124,14 @@ export default async function ReportesPage({ searchParams }: { searchParams: Sea
                 <option key={w.key} value={w.key}>{w.label}</option>
               ))}
             </select>
+            <CreditNotesSelect net={credits} />
             <button className="btn btn-secondary">Aplicar</button>
           </form>
         }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Facturación del período" value={fmtCompact(totalBilled)} hint={`${fmtNumber(invoices.length)} facturas · ${win.label.toLowerCase()}`} icon={<IconSales size={15} />} />
+        <StatTile label="Facturación del período" value={fmtCompact(totalBilled)} hint={`${fmtNumber(invoices.length)} facturas${creditTotal ? ` menos ${fmtCompact(creditTotal)} en notas crédito` : ""} · ${win.label.toLowerCase()}`} icon={<IconSales size={15} />} />
         <StatTile label="Tasa de quiebre" value={zoneShelf.length ? fmtPct((oosTotal / zoneShelf.length) * 100) : "—"} hint={`${fmtNumber(oosTotal)} de ${fmtNumber(zoneShelf.length)} mediciones`} icon={<IconAlert size={15} />} invertDelta />
         <StatTile label="Planograma incumplido" value={zoneShelf.length ? fmtPct((planogramFails / zoneShelf.length) * 100) : "—"} hint="Pérdida de espacio negociado" icon={<IconStore size={15} />} invertDelta />
         <StatTile label="Precio mal exhibido" value={zoneShelf.length ? fmtPct((priceFails / zoneShelf.length) * 100) : "—"} hint={`${fmtNumber(priceFails)} etiquetas fuera de lista`} icon={<IconReports size={15} />} invertDelta />

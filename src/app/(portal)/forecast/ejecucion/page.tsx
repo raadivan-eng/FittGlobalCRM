@@ -4,9 +4,9 @@ import { requireSection } from "@/lib/auth";
 import { leadForecasts, periodKey, periodShort, startOfMonth } from "@/lib/analytics";
 import { NO_PRODUCT, documentShares, forecastExecution, rollUp, type Cell, type DocShare, type ExecutionRow } from "@/lib/forecast-execution";
 import { fmtCompact, fmtDate, fmtMoney, fmtNumber, fmtPeriod } from "@/lib/format";
-import { flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { flatten, many, one, pageCount, pagination, netOfCredits, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, PageHeader, StatTile } from "@/components/ui";
-import { Filters } from "@/components/filters";
+import { CREDIT_NOTES_FILTER, Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
 import { GroupedBarChart } from "@/components/charts";
 import { IconForecast, IconSales, IconTarget } from "@/components/icons";
@@ -80,7 +80,7 @@ export default async function EjecucionPage({ searchParams }: { searchParams: Se
   const productIds = many(sp.producto);
   const categories = many(sp.categoria);
   // Por defecto la ejecución es lo facturado; el filtro le descuenta las notas crédito.
-  const credits = one(sp.nc) === "con";
+  const credits = netOfCredits(sp);
   const origin = one(sp.origen);
 
   const range = monthsBetween(from, to);
@@ -200,7 +200,7 @@ export default async function EjecucionPage({ searchParams }: { searchParams: Se
           { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), multi: true },
           { type: "select", name: "categoria", label: "Todas las categorías", options: [...new Set(products.map((p) => p.category))].sort().map((c) => ({ value: c, label: c })), multi: true },
           { type: "select", name: "producto", label: "Todos los productos", options: products.map((p) => ({ value: p.id, label: `${p.sku} · ${p.name}` })), multi: true },
-          { type: "select", name: "nc", label: "Sin descontar notas crédito", width: "w-56", options: [{ value: "con", label: "Descontando notas crédito" }] },
+          CREDIT_NOTES_FILTER,
         ]}
       />
 
@@ -331,7 +331,7 @@ export default async function EjecucionPage({ searchParams }: { searchParams: Se
           <p>
             El forecast de cada producto es lo que el cliente le compró en promedio cada mes, con la misma ventana y meses excluidos que su forecast;
             si el forecast del cliente se fijó a mano, se reparte con esa mezcla. La ejecución es el neto facturado en Siigo, sin IVA
-            {credits ? ", menos las notas crédito: cada una resta con la mezcla de productos de la factura que afecta" : "; las notas crédito no se descuentan salvo que lo pidas en el filtro"}.
+            {credits ? ", menos las notas crédito: cada una resta con la mezcla de productos de la factura que afecta" : "; las notas crédito no se descuentan porque así lo pediste en el filtro"}.
             Haz clic en un valor de ejecución para ver las facturas de donde sale.
             {partial && " En el mes en curso el avance se mide contra la parte proporcional a los días transcurridos."}
           </p>

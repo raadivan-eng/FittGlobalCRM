@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { clientStatuses, NOT_VOID, startOfMonth } from "@/lib/analytics";
+import { clientStatuses, creditsByCompany, NOT_VOID, startOfMonth } from "@/lib/analytics";
 import { CHANNELS, CLIENT_INACTIVITY, CLIENT_STATUS, COMPANY_TYPES, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtNumber } from "@/lib/format";
-import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, netOfCredits, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader } from "@/components/ui";
-import { Filters } from "@/components/filters";
+import { CREDIT_NOTES_FILTER, Filters } from "@/components/filters";
 import { Pagination } from "@/components/pagination";
 import { IconClients } from "@/components/icons";
 import { ClassificationGuide } from "./classification-guide";
@@ -52,12 +52,13 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
   ]);
 
   const ids = companies.map((c) => c.id);
-  const [billing, pending] = await Promise.all([
+  const [billing, credited, pending] = await Promise.all([
     prisma.invoice.groupBy({
       by: ["companyId"],
       where: { companyId: { in: ids }, issueDate: { gte: since }, status: NOT_VOID },
       _sum: { net: true },
     }),
+    creditsByCompany(since, startOfMonth(1), netOfCredits(sp), { companyId: { in: ids } }),
     prisma.invoice.findMany({
       where: { companyId: { in: ids }, status: { in: ["EMITIDA", "PARCIAL", "VENCIDA"] } },
       select: { companyId: true, total: true, paidAmount: true },
@@ -65,6 +66,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
   ]);
 
   const billed = new Map(billing.map((b) => [b.companyId, b._sum.net ?? 0]));
+  for (const [id, net] of credited) billed.set(id, (billed.get(id) ?? 0) - net);
   const owed = new Map<string, number>();
   for (const i of pending) owed.set(i.companyId, (owed.get(i.companyId) ?? 0) + (i.total - i.paidAmount));
 
@@ -85,6 +87,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
           { type: "select", name: "canal", label: "Canal", options: CHANNELS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
           { type: "select", name: "tipo", label: "Tipo", options: COMPANY_TYPES.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
           { type: "select", name: "estado", label: "Estado", options: CLIENT_STATUS.options.map((o) => ({ value: o.value, label: o.label })) },
+          CREDIT_NOTES_FILTER,
         ]}
       />
 

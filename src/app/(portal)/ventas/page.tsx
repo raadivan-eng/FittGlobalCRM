@@ -4,11 +4,11 @@ import { requireSection } from "@/lib/auth";
 import { NOT_VOID, periodKey, periodShort, receivables, startOfMonth } from "@/lib/analytics";
 import { COMPANY_TYPES, INVOICE_STATUS, ORDER_STATUS } from "@/lib/enums";
 import { fmtCompact, fmtDate, fmtDateShort, fmtMoney, fmtNumber } from "@/lib/format";
-import { anyOf, flatten, many, one, pageCount, pagination, parseDay, type SearchParams } from "@/lib/params";
+import { anyOf, flatten, many, one, pageCount, pagination, parseDay, netOfCredits, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EmptyState, EnumBadge, PageHeader, StatTile } from "@/components/ui";
 import { LineChart } from "@/components/charts";
 import { Pagination } from "@/components/pagination";
-import { Filters } from "@/components/filters";
+import { CREDIT_NOTES_FILTER, Filters } from "@/components/filters";
 import { IconAlert, IconSales, IconTarget } from "@/components/icons";
 
 export const metadata = { title: "Ventas y facturación" };
@@ -42,8 +42,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
   const view = one(sp.vista) || (statuses.length && statuses.every((s) => INVOICE_STATES.has(s)) ? "facturas" : "pedidos");
   const companyIds = many(sp.cliente);
   const companyTypes = many(sp.tipo);
-  // Por defecto la facturación descuenta las notas crédito: es la venta real.
-  const grossOnly = one(sp.nc) === "sin";
+  const grossOnly = !netOfCredits(sp);
   const { page, pageSize, skip, take } = pagination(sp.page, 25);
 
   const now = new Date();
@@ -220,12 +219,7 @@ export default async function VentasPage({ searchParams }: { searchParams: Searc
               multi: true,
             },
             { type: "select", name: "cliente", label: "Todos los clientes", options: companies.map((c) => ({ value: c.id, label: c.name })), width: "w-60", multi: true },
-            {
-              type: "select",
-              name: "nc",
-              label: "Descontando notas crédito",
-              options: [{ value: "sin", label: "Sin descontar notas crédito" }],
-            },
+            CREDIT_NOTES_FILTER,
             // Las notas crédito no tienen estado.
             ...(view === "notas"
               ? []

@@ -7,7 +7,8 @@ import {
   monthlyMargin, netSales, receivablesAging, totalsBetween, workingCapital,
 } from "@/lib/management";
 import { fmtCompact, fmtNumber, fmtPct } from "@/lib/format";
-import { one, type SearchParams } from "@/lib/params";
+import { netOfCredits, one, type SearchParams } from "@/lib/params";
+import { CreditNotesSelect } from "@/components/filters";
 import { Badge, Card, CardHeader, PageHeader, StatTile } from "@/components/ui";
 import { CompositionBar, GroupedBarChart, LineChart, RankingBars } from "@/components/charts";
 import { IconAlert, IconArrowRight, IconCart, IconExpiry, IconSales, IconTarget } from "@/components/icons";
@@ -30,6 +31,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
   await requireSection("gerencia");
   const sp = await searchParams;
   const win = WINDOWS.find((w) => w.key === one(sp.rango)) ?? WINDOWS[0];
+  const withCredits = netOfCredits(sp);
 
   const now = new Date();
   const curr = { from: startOfMonth(-win.months, now), to: startOfMonth(0, now) };
@@ -38,7 +40,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
   const factsFrom = prev.from < startOfMonth(-11, now) ? prev.from : startOfMonth(-11, now);
 
   const [facts, serve, aging, capital, expiry, companies, products] = await Promise.all([
-    marginFacts(factsFrom, startOfMonth(1, now)),
+    marginFacts(factsFrom, startOfMonth(1, now), withCredits),
     costToServe(curr.from, curr.to),
     receivablesAging(),
     workingCapital(),
@@ -55,6 +57,9 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
   const margin1 = grossMargin(t1);
   const pct1 = marginPct(t1);
   const pct0 = marginPct(t0);
+  const costSource =
+    t1.booked === t1.months ? "Costo del estado de resultados" :
+    t1.booked ? `Costo contable en ${t1.booked} de ${t1.months} meses` : "Costo de los productos";
 
   const freightTotal = [...serve.freight.values()].reduce((s, v) => s + v, 0);
   const tradeTotal = [...serve.trade.values()].reduce((s, v) => s + v, 0);
@@ -147,6 +152,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
                 <option key={w.key} value={w.key}>{w.label}</option>
               ))}
             </select>
+            <CreditNotesSelect net={withCredits} />
             <button className="btn btn-secondary">Aplicar</button>
           </form>
         }
@@ -154,8 +160,8 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
       <GerenciaTabs active="/gerencia" />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Venta neta" value={fmtCompact(sales1)} delta={change(sales1, netSales(t0))} hint="vs período anterior" icon={<IconSales size={15} />} />
-        <StatTile label="Margen bruto" value={fmtCompact(margin1)} delta={change(margin1, grossMargin(t0))} hint="vs período anterior" icon={<IconTarget size={15} />} />
+        <StatTile label="Venta neta" value={fmtCompact(sales1)} delta={change(sales1, netSales(t0))} hint={withCredits ? "Menos notas crédito · vs período anterior" : "Sin descontar notas crédito · vs período anterior"} icon={<IconSales size={15} />} />
+        <StatTile label="Margen bruto" value={fmtCompact(margin1)} delta={change(margin1, grossMargin(t0))} hint={`${costSource} · vs período anterior`} icon={<IconTarget size={15} />} />
         <StatTile label="Margen bruto %" value={fmtPct(pct1)} hint={`${pp(pct1 - pct0)} vs anterior · mínimo ${MIN_MARGIN_PCT} %`} />
         <StatTile label="Margen de contribución" value={fmtCompact(contribution)} hint={`Tras ${fmtCompact(freightTotal)} en fletes y ${fmtCompact(tradeTotal)} en trade`} />
       </div>
@@ -180,7 +186,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
           </div>
         </Card>
         <Card>
-          <CardHeader title="Margen bruto %" subtitle={`Sobre la venta costeada · el mínimo aceptable es ${MIN_MARGIN_PCT} %`} />
+          <CardHeader title="Margen bruto %" subtitle={`Con el costo de ventas contable en los meses cargados · el mínimo es ${MIN_MARGIN_PCT} %`} />
           <div className="px-4 py-4">
             <LineChart
               data={series.map((s) => ({ label: s.label, values: [s.pct] }))}
@@ -220,7 +226,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
             })}
           </ul>
           <p className="border-t border-[var(--border)] px-4 py-3 text-[12px] text-[var(--text-muted)]">
-            El costo es el promedio ponderado de los lotes en bodega, igual para ambos períodos: un alza de proveedor todavía no se ve aquí.
+            Volumen, precio y mezcla usan el costo promedio de los lotes, igual en ambos períodos; el costo contable recoge la diferencia con el estado de resultados.
           </p>
         </Card>
 
@@ -252,7 +258,7 @@ export default async function GerenciaPage({ searchParams }: { searchParams: Sea
         <div id="clientes" className="scroll-mt-20" />
         <CardHeader
           title="Rentabilidad por cliente"
-          subtitle="Margen bruto menos fletes e inversión en trade del período: lo que de verdad deja cada cuenta"
+          subtitle="Margen bruto con el costo de cada producto, menos fletes y trade del período: el estado de resultados no se abre por cliente"
         />
         <div className="scroll-x">
           <table className="tbl">

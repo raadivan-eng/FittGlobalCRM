@@ -29,13 +29,28 @@ export function lastMonths(count: number, ref = new Date()) {
 
 /* ─────────────────────────────  Facturación  ───────────────────────────── */
 
-export async function billedBetween(from: Date, to: Date, companyId?: string) {
-  const r = await prisma.invoice.aggregate({
-    where: { issueDate: { gte: from, lt: to }, status: NOT_VOID, ...(companyId ? { companyId } : {}) },
-    _sum: { net: true, paidAmount: true },
-    _count: true,
-  });
-  return { total: r._sum.net ?? 0, paid: r._sum.paidAmount ?? 0, count: r._count };
+/** Notas crédito por cliente en un rango; vacío si la vista no las descuenta. */
+export async function creditsByCompany(from: Date, to: Date, credits = true, where: Prisma.CreditNoteWhereInput = {}) {
+  if (!credits) return new Map<string, number>();
+  const rows = await prisma.creditNote.groupBy({ by: ["companyId"], where: { ...where, issueDate: { gte: from, lt: to } }, _sum: { net: true } });
+  return new Map(rows.map((r) => [r.companyId, r._sum.net ?? 0]));
+}
+
+/** Facturado en el rango; con `credits` (por defecto) descuenta las notas crédito. */
+export async function billedBetween(from: Date, to: Date, companyId?: string, credits = true) {
+  const scope = companyId ? { companyId } : {};
+  const [r, nc] = await Promise.all([
+    prisma.invoice.aggregate({
+      where: { issueDate: { gte: from, lt: to }, status: NOT_VOID, ...scope },
+      _sum: { net: true, paidAmount: true },
+      _count: true,
+    }),
+    credits
+      ? prisma.creditNote.aggregate({ where: { issueDate: { gte: from, lt: to }, ...scope }, _sum: { net: true } })
+      : Promise.resolve(null),
+  ]);
+  const creditTotal = nc?._sum.net ?? 0;
+  return { total: (r._sum.net ?? 0) - creditTotal, credits: creditTotal, paid: r._sum.paidAmount ?? 0, count: r._count };
 }
 
 /* ───────────────────────────────  Forecast  ────────────────────────────── */
@@ -300,19 +315,21 @@ export async function leadForecasts(periods: string[], criteria?: ForecastCriter
 
 /**
  * Serie mensual de facturación real y forecast en la misma escala. El forecast
- * suma clientes, leads y los nuevos negocios sin identificar del criterio.
+ * suma clientes, leads y los nuevos negocios sin identificar del criterio. Con
+ * `credits` (por defecto) el real descuenta las notas crédito.
  */
-export async function forecastVsBilling(months = 12) {
+export async function forecastVsBilling(months = 12, credits = true) {
   const range = lastMonths(months);
   const from = range[0].start;
   const to = range[range.length - 1].end;
   const criteria = await getForecastCriteria();
 
-  const [invoices, forecasts, leads] = await Promise.all([
+  const [invoices, notes, forecasts, leads] = await Promise.all([
     prisma.invoice.findMany({
       where: { issueDate: { gte: from, lt: to }, status: NOT_VOID },
       select: { issueDate: true, net: true },
     }),
+    credits ? prisma.creditNote.findMany({ where: { issueDate: { gte: from, lt: to } }, select: { issueDate: true, net: true } }) : [],
     companyForecasts(range.map((r) => r.period), undefined, { criteria }),
     leadForecasts(range.map((r) => r.period), criteria),
   ]);
@@ -321,6 +338,10 @@ export async function forecastVsBilling(months = 12) {
   for (const inv of invoices) {
     const k = periodKey(inv.issueDate);
     realByPeriod.set(k, (realByPeriod.get(k) ?? 0) + inv.net);
+  }
+  for (const n of notes) {
+    const k = periodKey(n.issueDate);
+    realByPeriod.set(k, (realByPeriod.get(k) ?? 0) - n.net);
   }
   const fcByPeriod = new Map(
     range.map((r) => [r.period, sumForecasts(forecasts.get(r.period)) + (leads.get(r.period)?.total ?? 0) + criteria.newBusiness]),
@@ -355,14 +376,20 @@ export async function topProducts(from: Date, to: Date, limit = 8) {
   });
 }
 
-export async function topCompanies(from: Date, to: Date, limit = 8) {
-  const rows = await prisma.invoice.groupBy({
-    by: ["companyId"],
-    where: { issueDate: { gte: from, lt: to }, status: NOT_VOID },
-    _sum: { net: true },
-    orderBy: { _sum: { net: "desc" } },
-    take: limit,
-  });
+/** Clientes que más facturaron; con `credits` (por defecto) el orden ya descuenta notas crédito. */
+export async function topCompanies(from: Date, to: Date, limit = 8, credits = true) {
+  const [billed, nc] = await Promise.all([
+    prisma.invoice.groupBy({
+      by: ["companyId"],
+      where: { issueDate: { gte: from, lt: to }, status: NOT_VOID },
+      _sum: { net: true },
+    }),
+    creditsByCompany(from, to, credits),
+  ]);
+  const rows = billed
+    .map((r) => ({ companyId: r.companyId, revenue: (r._sum.net ?? 0) - (nc.get(r.companyId) ?? 0) }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit);
   const companies = await prisma.company.findMany({
     where: { id: { in: rows.map((r) => r.companyId) } },
     select: { id: true, name: true, code: true, tier: true, channel: true },
@@ -370,7 +397,7 @@ export async function topCompanies(from: Date, to: Date, limit = 8) {
   const byId = new Map(companies.map((c) => [c.id, c]));
   return rows.flatMap((r) => {
     const company = byId.get(r.companyId);
-    return company ? [{ company, revenue: r._sum.net ?? 0 }] : [];
+    return company ? [{ company, revenue: r.revenue }] : [];
   });
 }
 

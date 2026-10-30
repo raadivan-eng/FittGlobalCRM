@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "./prisma";
-import { NOT_VOID, lastMonths } from "./analytics";
+import { NOT_VOID, lastMonths, periodKey } from "./analytics";
+import { groupOf } from "./pnl";
 
 /**
  * Margen bruto mínimo aceptable, en porcentaje sobre la venta neta. Por debajo
@@ -43,16 +44,32 @@ export type MarginLine = {
   cost: number;
 };
 
-export type MarginTotals = { revenue: number; cost: number; credits: number; uncosted: number };
+export type MarginTotals = {
+  revenue: number;
+  cost: number;
+  credits: number;
+  uncosted: number;
+  /** Lo mismo con el costo de los productos, sin el contable: así se arma el puente. */
+  lineRevenue: number;
+  lineCost: number;
+  /** Meses del período cuyo costo salió del estado de resultados. */
+  booked: number;
+  months: number;
+};
 
 /**
  * Renglones facturados entre dos fechas con su costo, más las notas crédito y
  * la facturación sin pedido (que no se puede costear). Se reparte el neto de
  * cada factura entre sus renglones para que el descuento del pedido y los
- * ajustes de facturación queden dentro de la venta de cada producto.
+ * ajustes de facturación queden dentro de la venta de cada producto. Con
+ * `withCredits: false` las notas crédito no se leen y la venta queda emitida.
+ *
+ * El costo de ventas del estado de resultados cargado (cuentas 6 y 7) manda
+ * sobre el de los productos en los meses que lo tienen: es el que cierra la
+ * contabilidad y cubre también la facturación sin pedido.
  */
-export async function marginFacts(from: Date, to: Date) {
-  const [invoices, credits, costs] = await Promise.all([
+export async function marginFacts(from: Date, to: Date, withCredits = true) {
+  const [invoices, credits, costs, statement] = await Promise.all([
     prisma.invoice.findMany({
       where: { issueDate: { gte: from, lt: to }, status: NOT_VOID },
       select: {
@@ -62,9 +79,18 @@ export async function marginFacts(from: Date, to: Date) {
         order: { select: { lines: { select: { productId: true, quantity: true, total: true, product: { select: { category: true } } } } } },
       },
     }),
-    prisma.creditNote.findMany({ where: { issueDate: { gte: from, lt: to } }, select: { issueDate: true, companyId: true, net: true } }),
+    withCredits
+      ? prisma.creditNote.findMany({ where: { issueDate: { gte: from, lt: to } }, select: { issueDate: true, companyId: true, net: true } })
+      : [],
     productCosts(),
+    prisma.incomeStatementLine.findMany({
+      where: { period: { gte: periodKey(from), lt: periodKey(to) } },
+      select: { period: true, accountCode: true, amount: true },
+    }),
   ]);
+
+  const bookedCost = new Map<string, number>();
+  for (const r of statement) if (groupOf(r.accountCode) === "COSTO") bookedCost.set(r.period, (bookedCost.get(r.period) ?? 0) + r.amount);
 
   const lines: MarginLine[] = [];
   const uncosted: { date: Date; companyId: string; net: number }[] = [];
@@ -88,25 +114,46 @@ export async function marginFacts(from: Date, to: Date) {
       });
     }
   }
-  return { lines, credits, uncosted };
+  return { lines, credits, uncosted, bookedCost };
 }
 
 export type MarginFacts = Awaited<ReturnType<typeof marginFacts>>;
 
 const inRange = (d: Date, from: Date, to: Date) => d >= from && d < to;
 
-/** Totales de un período. Las notas crédito restan venta y margen: no devuelven costo. */
+/**
+ * Totales de un período. Las notas crédito restan venta y margen: no devuelven
+ * costo. En los meses con costo contable, ése reemplaza al de los productos y
+ * la facturación sin pedido deja de quedar por fuera del margen.
+ */
 export function totalsBetween(facts: MarginFacts, from: Date, to: Date): MarginTotals {
-  const t = { revenue: 0, cost: 0, credits: 0, uncosted: 0 };
-  for (const l of facts.lines) if (inRange(l.date, from, to)) { t.revenue += l.revenue; t.cost += l.cost; }
+  const t = { revenue: 0, cost: 0, credits: 0, uncosted: 0, lineRevenue: 0, lineCost: 0, booked: 0, months: 0 };
+  for (const l of facts.lines) {
+    if (!inRange(l.date, from, to)) continue;
+    t.lineRevenue += l.revenue;
+    t.lineCost += l.cost;
+    t.revenue += l.revenue;
+    if (!facts.bookedCost.has(periodKey(l.date))) t.cost += l.cost;
+  }
   for (const c of facts.credits) if (inRange(c.issueDate, from, to)) t.credits += c.net;
-  for (const u of facts.uncosted) if (inRange(u.date, from, to)) t.uncosted += u.net;
+  for (const u of facts.uncosted) {
+    if (!inRange(u.date, from, to)) continue;
+    if (facts.bookedCost.has(periodKey(u.date))) t.revenue += u.net;
+    else t.uncosted += u.net;
+  }
+  for (let m = new Date(from.getFullYear(), from.getMonth(), 1); m < to; m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+    t.months++;
+    const booked = facts.bookedCost.get(periodKey(m));
+    if (booked == null) continue;
+    t.cost += booked;
+    t.booked++;
+  }
   return t;
 }
 
 /** Venta neta: lo costeado más lo que no tiene pedido, menos notas crédito. */
 export const netSales = (t: MarginTotals) => t.revenue + t.uncosted - t.credits;
-/** Margen bruto sobre lo costeado. */
+/** Margen bruto sobre lo costeado: con costo contable, toda la venta del mes. */
 export const grossMargin = (t: MarginTotals) => t.revenue - t.cost - t.credits;
 export const marginPct = (t: MarginTotals) => (t.revenue - t.credits > 0 ? (grossMargin(t) / (t.revenue - t.credits)) * 100 : 0);
 
@@ -142,8 +189,10 @@ export function groupLines(facts: MarginFacts, from: Date, to: Date, key: (l: Ma
  *  - Mezcla: cambiar el peso de productos de margen alto frente a los de bajo,
  *    incluidos los que se vendieron en un período y no en el otro.
  *  - Notas crédito: lo que se devolvió o se rebajó después de facturar.
- * El costo es el promedio actual de lotes en ambos períodos, así que aquí
- * todavía no aparece el efecto de que el proveedor suba o baje precios.
+ *  - Costo contable: cuánto se aparta el costo de ventas del estado de
+ *    resultados del de los productos, en los meses que lo tienen cargado.
+ * Los tres primeros usan el costo de los productos, el promedio actual de
+ * lotes en ambos períodos: el alza de un proveedor sólo se ve en el contable.
  */
 export function marginBridge(facts: MarginFacts, prev: { from: Date; to: Date }, curr: { from: Date; to: Date }) {
   const p0 = groupLines(facts, prev.from, prev.to, (l) => l.productId);
@@ -151,8 +200,8 @@ export function marginBridge(facts: MarginFacts, prev: { from: Date; to: Date },
   const t0 = totalsBetween(facts, prev.from, prev.to);
   const t1 = totalsBetween(facts, curr.from, curr.to);
 
-  const margin0 = t0.revenue - t0.cost;
-  const margin1 = t1.revenue - t1.cost;
+  const margin0 = t0.lineRevenue - t0.lineCost;
+  const margin1 = t1.lineRevenue - t1.lineCost;
 
   // Volumen: el margen anterior escalado por cuánto creció la venta a precios anteriores.
   let revAtOldPrice = 0;
@@ -164,18 +213,23 @@ export function marginBridge(facts: MarginFacts, prev: { from: Date; to: Date },
     revAtOldPrice += a1.units * oldPrice;
     price += a1.revenue - a1.units * oldPrice;
   }
-  const volume = t0.revenue > 0 ? margin0 * (revAtOldPrice / t0.revenue - 1) : 0;
+  const volume = t0.lineRevenue > 0 ? margin0 * (revAtOldPrice / t0.lineRevenue - 1) : 0;
   const mix = margin1 - margin0 - volume - price;
   const credits = -(t1.credits - t0.credits);
+  const before = grossMargin(t0);
+  const after = grossMargin(t1);
+  // Lo que queda tras los efectos anteriores es la diferencia del costo contable.
+  const booked = after - before - volume - price - mix - credits;
 
   return {
-    before: grossMargin(t0),
-    after: grossMargin(t1),
+    before,
+    after,
     steps: [
       { label: "Volumen", value: volume },
       { label: "Precio", value: price },
       { label: "Mezcla de productos", value: mix },
       { label: "Notas crédito", value: credits },
+      ...(t0.booked || t1.booked ? [{ label: "Costo contable", value: booked }] : []),
     ],
   };
 }
