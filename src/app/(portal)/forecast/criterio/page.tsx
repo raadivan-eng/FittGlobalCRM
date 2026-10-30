@@ -29,6 +29,7 @@ function criteriaQuery(c: ForecastCriteria) {
     inactivo: String(c.dormantMonths),
     caliente: String(c.hotLeadPct),
     tibio: String(c.warmLeadPct),
+    frio: String(c.coldLeadPct),
     mesesLead: String(c.leadMonths),
     nuevos: String(Math.round(c.newBusiness)),
   });
@@ -167,11 +168,11 @@ export default async function CriterioForecastPage({ searchParams }: { searchPar
     .map((id) => {
       const s = simNext.get(id);
       const v = savedNext.get(id);
-      return { id, name: companyName.get(id) ?? "—", saved: v?.baseline ?? 0, sim: s?.baseline ?? 0, manual: s?.source === "MANUAL", dormant: s?.dormant ?? false, seasonal: s?.seasonal ?? false };
+      return { id, name: companyName.get(id) ?? "—", saved: v?.baseline ?? 0, sim: s?.baseline ?? 0, manual: s?.source === "MANUAL", dormant: s?.inactive === "SIN_COMPRAS", seasonal: s?.seasonal ?? false };
     })
     .filter((c) => Math.round(c.sim) !== Math.round(c.saved))
     .sort((a, b) => Math.abs(b.sim - b.saved) - Math.abs(a.sim - a.saved));
-  const dormant = [...simNext.values()].filter((f) => f.dormant).length;
+  const dormant = [...simNext.values()].filter((f) => f.inactive === "SIN_COMPRAS").length;
 
   const nbNext = nextMonth.leads + sim.newBusiness;
 
@@ -241,19 +242,25 @@ export default async function CriterioForecastPage({ searchParams }: { searchPar
                 <Field label="Factor de pico" hint="También marca los meses atípicos">
                   <input name="factor" inputMode="decimal" defaultValue={String(sim.outlierFactor).replace(".", ",")} className="field" />
                 </Field>
-                <Field label="Inactivo tras (meses)" hint="Sin compra: se proyecta en 0. 0 lo apaga">
+                <Field label="Inactivo tras (meses)" hint="Meses cerrados sin compra: pasa a inactivo y se proyecta en 0. 0 lo apaga">
                   <input name="inactivo" type="number" min={0} max={12} defaultValue={sim.dormantMonths} className="field" />
                 </Field>
               </div>
             </Section>
 
             <Section title="Nuevos negocios">
-              <div className="grid grid-cols-2 gap-2.5">
-                <Field label="Leads calientes %" hint="Del valor esperado">
+              <p className="text-[11.5px] text-[var(--text-muted)]">
+                Cada lead abierto con mes de cierre y valor suma a ese mes el porcentaje de su valor que diga su temperatura. 0 para no contarlos.
+              </p>
+              <div className="grid grid-cols-3 gap-2.5">
+                <Field label="Calientes %">
                   <input name="caliente" type="number" min={0} max={100} defaultValue={sim.hotLeadPct} className="field" />
                 </Field>
-                <Field label="Leads tibios %" hint="0 para no contarlos">
+                <Field label="Tibios %">
                   <input name="tibio" type="number" min={0} max={100} defaultValue={sim.warmLeadPct} className="field" />
+                </Field>
+                <Field label="Fríos %">
+                  <input name="frio" type="number" min={0} max={100} defaultValue={sim.coldLeadPct} className="field" />
                 </Field>
               </div>
               <Field label="Meses que aporta cada negocio" hint="1: sólo el mes de cierre. 3: cierre y los dos siguientes, hasta que tenga historia propia.">
@@ -278,7 +285,7 @@ export default async function CriterioForecastPage({ searchParams }: { searchPar
                 </Link>
               )}
               {!sameCriteria(sim, DEFAULT_CRITERIA) && (
-                <Link href={`/forecast/criterio${criteriaQuery(DEFAULT_CRITERIA)}`} className="btn btn-ghost !px-2 text-[12.5px]" title="Promedio del año vigente y sólo leads calientes al 100%">
+                <Link href={`/forecast/criterio${criteriaQuery(DEFAULT_CRITERIA)}`} className="btn btn-ghost !px-2 text-[12.5px]" title="Promedio del año vigente, inactivo tras seis meses sin compra y todos los leads al 100%">
                   De fábrica
                 </Link>
               )}

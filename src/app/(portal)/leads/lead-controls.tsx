@@ -132,7 +132,7 @@ export function CloseFields({
           ))}
         </select>
       </Field>
-      <Field label={hot ? "Mes tentativo de cierre *" : "Mes tentativo de cierre"}>
+      <Field label={hot ? "Mes tentativo de cierre *" : "Mes tentativo de cierre"} hint="Con valor, el lead suma al forecast de ese mes">
         <select name="closePeriod" className="field" defaultValue={closePeriod ?? ""} required={hot}>
           <option value="">Sin definir</option>
           {options.map((p) => (

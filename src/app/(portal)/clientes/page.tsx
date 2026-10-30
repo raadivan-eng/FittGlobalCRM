@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { NOT_VOID, startOfMonth } from "@/lib/analytics";
-import { CHANNELS, COMPANY_TYPES, TIERS } from "@/lib/enums";
+import { clientStatuses, NOT_VOID, startOfMonth } from "@/lib/analytics";
+import { CHANNELS, CLIENT_INACTIVITY, CLIENT_STATUS, COMPANY_TYPES, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtNumber } from "@/lib/format";
 import { anyOf, flatten, many, one, pageCount, pagination, type SearchParams } from "@/lib/params";
 import { Card, EmptyState, EnumBadge, PageHeader } from "@/components/ui";
@@ -21,10 +21,15 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
   const tiers = many(sp.tier);
   const channels = many(sp.canal);
   const types = many(sp.tipo);
+  const state = CLIENT_STATUS.values.find((v) => v === one(sp.estado));
   const { page, pageSize, skip, take } = pagination(sp.page, 20);
 
+  // El estado se deriva de las compras, así que el filtro se resuelve a ids.
+  const statuses = await clientStatuses();
+  const inactiveCount = [...statuses.values()].filter((st) => st.inactive).length;
   const where = {
     active: true,
+    ...(state ? { id: { in: [...statuses].filter(([, st]) => st.status === state).map(([id]) => id) } } : {}),
     ...(q ? { OR: [{ name: { contains: q } }, { code: { contains: q } }, { city: { contains: q } }] } : {}),
     ...(tiers.length ? { tier: anyOf(tiers) } : {}),
     ...(channels.length ? { channel: anyOf(channels) } : {}),
@@ -68,7 +73,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
       <PageHeader
         title="Clientes"
         subtitle="Empresas y cadenas que compran al por mayor. Cada una agrupa sus puntos de venta y sus contactos."
-        actions={<span className="badge badge-neutral">{fmtNumber(total)} activos</span>}
+        actions={<span className="badge badge-neutral">{fmtNumber(statuses.size - inactiveCount)} activos · {fmtNumber(inactiveCount)} inactivos</span>}
       />
 
       <ClassificationGuide />
@@ -79,6 +84,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
           { type: "select", name: "tier", label: "Clasificación ABC", options: TIERS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
           { type: "select", name: "canal", label: "Canal", options: CHANNELS.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
           { type: "select", name: "tipo", label: "Tipo", options: COMPANY_TYPES.options.map((o) => ({ value: o.value, label: o.label })), multi: true },
+          { type: "select", name: "estado", label: "Estado", options: CLIENT_STATUS.options.map((o) => ({ value: o.value, label: o.label })) },
         ]}
       />
 
@@ -95,6 +101,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
                     <th>Tipo</th>
                     <th>Canal</th>
                     <th>ABC</th>
+                    <th>Estado</th>
                     <th className="num">Tiendas</th>
                     <th className="num">Contactos</th>
                     <th className="num">Facturación 12 m</th>
@@ -116,6 +123,18 @@ export default async function ClientesPage({ searchParams }: { searchParams: Sea
                       <td title={COMPANY_TYPES.get(c.type).hint}><EnumBadge option={COMPANY_TYPES.get(c.type)} /></td>
                       <td className="text-[var(--text-secondary)]" title={CHANNELS.get(c.channel).hint}>{CHANNELS.label(c.channel)}</td>
                       <td><EnumBadge option={TIERS.get(c.tier)} /></td>
+                      <td>
+                        {(() => {
+                          const st = statuses.get(c.id);
+                          return st?.inactive ? (
+                            <span title={`${CLIENT_INACTIVITY.label(st.inactive)}${st.inactiveReason ? `: ${st.inactiveReason}` : ""}`}>
+                              <EnumBadge option={CLIENT_STATUS.get("INACTIVO")} />
+                            </span>
+                          ) : (
+                            <EnumBadge option={CLIENT_STATUS.get("ACTIVO")} />
+                          );
+                        })()}
+                      </td>
                       <td className="num">{c._count.stores}</td>
                       <td className="num">{c._count.contacts}</td>
                       <td className="num font-semibold">{fmtCompact(billed.get(c.id) ?? 0)}</td>

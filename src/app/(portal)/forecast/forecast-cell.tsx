@@ -8,6 +8,7 @@ import { IconCheck, IconEdit, IconX } from "@/components/icons";
 /**
  * `manual` es el monto cargado a mano (null si no hay); `baseline` lo que
  * proyecta el criterio cuando no hay manual. Guardar vacío vuelve al criterio.
+ * Un cliente `inactive` muestra 0 en lugar de «Sin historial».
  */
 export function ForecastCell({
   period,
@@ -15,12 +16,14 @@ export function ForecastCell({
   manual,
   baseline,
   editable,
+  inactive = false,
 }: {
   period: string;
   companyId: string;
   manual: number | null;
   baseline: number;
   editable: boolean;
+  inactive?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const amount = manual ?? baseline;
@@ -28,7 +31,7 @@ export function ForecastCell({
   if (!editable || !editing) {
     return (
       <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
-        <span className={amount > 0 ? "font-semibold" : "text-[var(--text-muted)]"}>{amount > 0 ? fmtMoney(amount) : "Sin historial"}</span>
+        <span className={amount > 0 ? "font-semibold" : "text-[var(--text-muted)]"}>{amount > 0 || inactive ? fmtMoney(amount) : "Sin historial"}</span>
         {editable && (
           <button type="button" onClick={() => setEditing(true)} className="btn btn-ghost !px-1 !py-0.5" title="Ajustar forecast" aria-label="Ajustar forecast">
             <IconEdit size={12} />

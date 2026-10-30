@@ -72,3 +72,33 @@ export async function guardarCliente(_prev: ClientFormState, fd: FormData): Prom
   revalidatePath("/");
   return { ok: "Cliente guardado." };
 }
+
+/**
+ * Inactiva o reactiva un cliente a mano. Inactivo, el forecast deja de
+ * proyectarlo desde este mes; los meses anteriores no cambian, así la
+ * ejecución pasada sigue midiéndose igual. Repetirlo no hace daño en D1: se
+ * conserva la fecha de la primera inactivación.
+ */
+export async function cambiarEstadoCliente(_prev: ClientFormState, fd: FormData): Promise<ClientFormState> {
+  await requireRole(CLIENT_ROLES);
+  const company = await prisma.company.findUnique({ where: { id: texto(fd, "companyId") }, select: { id: true, inactiveSince: true } });
+  if (!company) return { error: "El cliente ya no existe." };
+
+  const inactivar = texto(fd, "estado") === "INACTIVO";
+  const reason = opcional(fd, "reason");
+  if (inactivar && !reason) return { error: "Cuenta por qué se inactiva: queda a la vista de quien revise el forecast." };
+
+  await prisma.company.update({
+    where: { id: company.id },
+    data: inactivar
+      ? { inactiveSince: company.inactiveSince ?? new Date(), inactiveReason: reason }
+      : { inactiveSince: null, inactiveReason: null },
+  });
+
+  // El estado pinta el listado y la ficha, y cambia el forecast, el tablero y la ejecución.
+  revalidatePath(`/clientes/${company.id}`);
+  revalidatePath("/clientes");
+  revalidatePath("/forecast", "layout");
+  revalidatePath("/");
+  return { ok: inactivar ? "Cliente inactivado." : "Cliente reactivado." };
+}

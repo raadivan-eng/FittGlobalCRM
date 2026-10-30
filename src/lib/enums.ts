@@ -65,6 +65,21 @@ export const FORECAST_SOURCE = catalog([
   { value: "MANUAL", label: "Manual", tone: "purple", hint: "Monto cargado por el comercial" },
 ] as const);
 
+/**
+ * Estado comercial del cliente; no se guarda, se deriva al leer
+ * (clientStatuses). Un inactivo no entra al forecast.
+ */
+export const CLIENT_STATUS = catalog([
+  { value: "ACTIVO", label: "Activo", tone: "success", hint: "Compra con regularidad: entra al forecast" },
+  { value: "INACTIVO", label: "Inactivo", tone: "neutral", hint: "Sin compras recientes o inactivado a mano: el forecast lo proyecta en 0" },
+] as const);
+
+/** Por qué un cliente está inactivo (ClientInactivity). */
+export const CLIENT_INACTIVITY = catalog([
+  { value: "SIN_COMPRAS", label: "Sin compras", tone: "neutral", hint: "Lleva los meses del criterio de forecast sin comprar; vuelve a activo con su próxima compra" },
+  { value: "MANUAL", label: "Inactivado a mano", tone: "warning", hint: "Sigue inactivo hasta que alguien lo reactive" },
+] as const);
+
 /** Cómo se proyecta la base histórica de cada cliente (ForecastCriteria.method). */
 export const FORECAST_METHODS = catalog([
   { value: "ANIO_VIGENTE", label: "Promedio del año vigente", tone: "neutral", hint: "Media de los meses cerrados del año. Enero se proyecta con el año que acaba de cerrar." },
@@ -205,8 +220,8 @@ export const LEAD_OPEN = ["NUEVO", "CONTACTADO", "CALIFICADO", "NEGOCIACION"] as
 
 /** Qué tan cerca está de comprar. Cuánto suma cada temperatura al forecast lo fija el criterio. */
 export const LEAD_TEMPERATURE = catalog([
-  { value: "CALIENTE", label: "Caliente", tone: "danger", hint: "Cierre probable: con mes y valor suma al forecast según el criterio" },
-  { value: "TIBIO", label: "Tibio", tone: "warning", hint: "Interesado, sin fecha de compra" },
+  { value: "CALIENTE", label: "Caliente", tone: "danger", hint: "Cierre probable: exige mes y valor, con los que suma al forecast" },
+  { value: "TIBIO", label: "Tibio", tone: "warning", hint: "Interesado; si tiene mes y valor suma al forecast según el criterio" },
   { value: "FRIO", label: "Frío", tone: "info", hint: "Primer acercamiento o sin respuesta" },
 ] as const);
 

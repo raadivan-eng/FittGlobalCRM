@@ -17,18 +17,23 @@ export type ForecastCriteria = {
   /** Los meses por encima de `outlierFactor` veces la mediana del cliente cuentan como ese tope. */
   capOutliers: boolean;
   outlierFactor: number;
-  /** Meses seguidos sin compra para dar al cliente por inactivo y proyectarlo en 0. 0 lo apaga. */
+  /** Meses cerrados seguidos sin compra para dar al cliente por inactivo y proyectarlo en 0. 0 lo apaga. */
   dormantMonths: number;
-  /** Porcentaje del valor esperado que suma cada lead caliente o tibio. */
+  /** Porcentaje del valor esperado que suma cada lead en su mes de cierre, según su temperatura. */
   hotLeadPct: number;
   warmLeadPct: number;
+  coldLeadPct: number;
   /** Meses que aporta un negocio nuevo desde su mes de cierre. */
   leadMonths: number;
   /** Monto mensual de negocios que todavía no tienen lead. */
   newBusiness: number;
 };
 
-/** Reproduce el forecast de siempre: promedio del año vigente y sólo leads calientes, una vez. */
+/**
+ * Criterio de fábrica: promedio del año vigente, sin contar a quien lleva más
+ * de seis meses sin comprar, y cada lead abierto con mes de cierre y valor suma
+ * completo a ese mes, sea cual sea su temperatura.
+ */
 export const DEFAULT_CRITERIA: ForecastCriteria = {
   method: "ANIO_VIGENTE",
   windowMonths: 6,
@@ -36,9 +41,10 @@ export const DEFAULT_CRITERIA: ForecastCriteria = {
   growthPct: 0,
   capOutliers: false,
   outlierFactor: 1.5,
-  dormantMonths: 0,
+  dormantMonths: 6,
   hotLeadPct: 100,
-  warmLeadPct: 0,
+  warmLeadPct: 100,
+  coldLeadPct: 100,
   leadMonths: 1,
   newBusiness: 0,
 };
@@ -63,6 +69,7 @@ export function normalizeCriteria(raw: Partial<Record<keyof ForecastCriteria, un
     dormantMonths: Math.round(clamp(raw.dormantMonths, 0, 12, d.dormantMonths)),
     hotLeadPct: clamp(raw.hotLeadPct, 0, 100, d.hotLeadPct),
     warmLeadPct: clamp(raw.warmLeadPct, 0, 100, d.warmLeadPct),
+    coldLeadPct: clamp(raw.coldLeadPct, 0, 100, d.coldLeadPct),
     leadMonths: Math.round(clamp(raw.leadMonths, 1, 12, d.leadMonths)),
     newBusiness: clamp(raw.newBusiness, 0, 1e12, d.newBusiness),
   };
@@ -70,6 +77,10 @@ export function normalizeCriteria(raw: Partial<Record<keyof ForecastCriteria, un
 
 export const sameCriteria = (a: ForecastCriteria, b: ForecastCriteria) =>
   (Object.keys(DEFAULT_CRITERIA) as (keyof ForecastCriteria)[]).every((k) => a[k] === b[k]);
+
+/** Porcentaje del valor esperado que un lead abierto suma a su mes de cierre. */
+export const leadPct = (temperature: string, c: ForecastCriteria) =>
+  temperature === "CALIENTE" ? c.hotLeadPct : temperature === "TIBIO" ? c.warmLeadPct : temperature === "FRIO" ? c.coldLeadPct : 0;
 
 export const periodStart = (period: string) => {
   const [y, m] = period.split("-").map(Number);
@@ -194,6 +205,18 @@ export function describeCriteria(c: ForecastCriteria) {
   return parts.join(", ");
 }
 
+/** Cuánto suma cada temperatura de lead, para los subtítulos: «todos al 100%» o el detalle. */
+export function describeLeads(c: ForecastCriteria) {
+  const pcts = [c.hotLeadPct, c.warmLeadPct, c.coldLeadPct];
+  if (pcts.every((p) => p === pcts[0])) return pcts[0] ? `todos al ${pcts[0].toLocaleString("es-CO")}% de su valor` : "ninguno";
+  const parts = [
+    ["calientes", c.hotLeadPct],
+    ["tibios", c.warmLeadPct],
+    ["fríos", c.coldLeadPct],
+  ].filter(([, p]) => p) as [string, number][];
+  return `${parts.map(([t, p]) => `${t} al ${p.toLocaleString("es-CO")}%`).join(", ")} de su valor`;
+}
+
 /**
  * Lee un criterio de un formulario o de la URL. Los nombres van en español
  * porque viajan en la query string de la simulación. Las casillas desmarcadas
@@ -216,6 +239,7 @@ export function criteriaFromInput(get: (name: string) => string | null): Forecas
     dormantMonths: num("inactivo"),
     hotLeadPct: num("caliente"),
     warmLeadPct: num("tibio"),
+    coldLeadPct: num("frio"),
     leadMonths: num("mesesLead"),
     newBusiness: num("nuevos"),
   });

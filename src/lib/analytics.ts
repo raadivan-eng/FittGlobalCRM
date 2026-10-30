@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { EXPIRY_BANDS, LEAD_OPEN, type ExpiryBandKey } from "./enums";
-import { criteriaWindow, DEFAULT_CRITERIA, normalizeCriteria, project, shiftPeriod, type ForecastCriteria } from "./forecast-criteria";
+import { criteriaWindow, DEFAULT_CRITERIA, leadPct, normalizeCriteria, periodOf, project, shiftPeriod, type ForecastCriteria } from "./forecast-criteria";
 
 export const NOT_VOID = { not: "ANULADA" as const };
 
@@ -58,18 +58,26 @@ export type CompanyForecast = {
   span: string[];
   /** La base salió del mismo mes del año anterior. */
   seasonal: boolean;
-  /** Sin compras recientes: el criterio lo proyecta en 0. */
-  dormant: boolean;
+  /**
+   * Cliente inactivo para ese período: SIN_COMPRAS si lleva los meses del
+   * criterio sin comprar, MANUAL si alguien lo inactivó. Su proyección es 0.
+   */
+  inactive: ClientInactivity | null;
   /** Cada mes de la ventana con lo facturado y si quedó fuera de la base. */
   history: { period: string; amount: number; excluded: "TODOS" | "CLIENTE" | null }[];
 };
+
+export type ClientInactivity = "SIN_COMPRAS" | "MANUAL";
 
 /**
  * Forecast por cliente para cada período pedido. Sin carga manual, la meta es
  * lo que proyecta el criterio (forecast-criteria.ts) sobre lo facturado en su
  * ventana. Los meses marcados como extraordinarios (ForecastExclusion) salen
- * de la suma y del conteo. Con `manual: false` se ignoran las cargas a mano:
- * así se mide qué tan bien habría acertado el criterio solo.
+ * de la suma y del conteo. Un cliente inactivo —por meses sin compra o a mano,
+ * desde el mes en que se inactivó— se proyecta en 0; una carga manual le gana
+ * al primero pero no al segundo. Con `manual: false` se
+ * ignoran las cargas a mano: así se mide qué tan bien habría acertado el
+ * criterio solo.
  */
 export async function companyForecasts(
   periods: string[],
@@ -83,7 +91,7 @@ export async function companyForecasts(
 
   const windowPeriods = [...new Set(windows.flatMap((w) => w.periods))];
 
-  const [invoices, manual, exclusions] = await Promise.all([
+  const [invoices, manual, exclusions, inactivated] = await Promise.all([
     from && to
       ? prisma.invoice.findMany({
           where: {
@@ -108,8 +116,14 @@ export async function companyForecasts(
       },
       select: { period: true, companyId: true },
     }),
+    prisma.company.findMany({
+      where: { inactiveSince: { not: null }, ...(companyId ? { id: companyId } : {}) },
+      select: { id: true, inactiveSince: true },
+    }),
   ]);
 
+  // Mes desde el que rige cada inactivación manual: los anteriores no cambian.
+  const inactiveFrom = new Map(inactivated.map((c) => [c.id, periodOf(c.inactiveSince!)]));
   const excludedForAll = new Set(exclusions.filter((e) => !e.companyId).map((e) => e.period));
   const excludedFor = new Set(exclusions.filter((e) => e.companyId).map((e) => `${e.companyId}|${e.period}`));
 
@@ -133,11 +147,25 @@ export async function companyForecasts(
       if (!history.some((h) => h.amount > 0)) continue;
       // Un cliente con todo excluido se queda en 0, pero conserva su historia
       // para poder deshacer el ajuste desde la pantalla.
+      const from = inactiveFrom.get(id);
+      const inactive: ClientInactivity | null = from && from <= w.period ? "MANUAL" : null;
       const p = project(history, w.period, criteria);
-      out.set(id, { amount: p.value, source: "PROMEDIO", baseline: p.value, months: p.months, span: p.span, seasonal: p.seasonal, dormant: p.dormant, history });
+      out.set(id, {
+        amount: inactive ? 0 : p.value,
+        source: "PROMEDIO",
+        baseline: inactive ? 0 : p.value,
+        months: p.months,
+        span: p.span,
+        seasonal: p.seasonal,
+        inactive: inactive ?? (p.dormant ? "SIN_COMPRAS" : null),
+        history,
+      });
     }
   }
   for (const f of manual) {
+    // Inactivarlo a mano es una decisión posterior a lo cargado: lo anula.
+    const from = inactiveFrom.get(f.companyId!);
+    if (from && from <= f.period) continue;
     const out = result.get(f.period)!;
     const auto = out.get(f.companyId!);
     out.set(f.companyId!, {
@@ -147,7 +175,7 @@ export async function companyForecasts(
       months: auto?.months ?? 0,
       span: auto?.span ?? [],
       seasonal: auto?.seasonal ?? false,
-      dormant: auto?.dormant ?? false,
+      inactive: auto?.inactive ?? null,
       history: auto?.history ?? [],
     });
   }
@@ -158,6 +186,52 @@ export function sumForecasts(byCompany: Map<string, CompanyForecast> | undefined
   let total = 0;
   for (const f of byCompany?.values() ?? []) total += f.amount;
   return total;
+}
+
+export type ClientStatus = {
+  status: "ACTIVO" | "INACTIVO";
+  inactive: ClientInactivity | null;
+  /** Última factura no anulada; null si nunca ha comprado. */
+  lastPurchase: Date | null;
+  /** Desde cuándo está inactivo a mano y por qué. */
+  inactiveSince: Date | null;
+  inactiveReason: string | null;
+};
+
+/**
+ * Estado comercial de cada cliente hoy. Inactivo a mano rige hasta que se
+ * reactive; si no, es inactivo quien no ha comprado en los últimos
+ * `dormantMonths` meses cerrados ni en el mes en curso (un cliente nuevo que
+ * aún no compra cuenta desde que se creó). Es la misma regla con que el
+ * forecast deja de proyectarlo.
+ */
+export async function clientStatuses(companyIds?: string[], criteria?: ForecastCriteria) {
+  const c = criteria ?? (await getForecastCriteria());
+  const where = companyIds ? { id: { in: companyIds } } : { active: true };
+  const [companies, last] = await Promise.all([
+    prisma.company.findMany({ where, select: { id: true, createdAt: true, inactiveSince: true, inactiveReason: true } }),
+    prisma.invoice.groupBy({
+      by: ["companyId"],
+      where: { status: NOT_VOID, ...(companyIds ? { companyId: { in: companyIds } } : { company: { active: true } }) },
+      _max: { issueDate: true },
+    }),
+  ]);
+  const lastBy = new Map(last.map((l) => [l.companyId, l._max.issueDate]));
+  const cutoff = startOfMonth(-c.dormantMonths);
+  return new Map<string, ClientStatus>(
+    companies.map((co) => {
+      const lastPurchase = lastBy.get(co.id) ?? null;
+      const inactive: ClientInactivity | null = co.inactiveSince
+        ? "MANUAL"
+        : c.dormantMonths > 0 && (lastPurchase ?? co.createdAt) < cutoff
+          ? "SIN_COMPRAS"
+          : null;
+      return [
+        co.id,
+        { status: inactive ? "INACTIVO" : "ACTIVO", inactive, lastPurchase, inactiveSince: co.inactiveSince, inactiveReason: co.inactiveReason },
+      ];
+    }),
+  );
 }
 
 export type LeadForecast = {
@@ -177,16 +251,15 @@ export type LeadForecast = {
 
 /**
  * Lo que aportan los leads al forecast: cada lead abierto con mes tentativo de
- * cierre y valor suma, según el criterio, un porcentaje de ese valor (uno para
- * los calientes, otro para los tibios) a su mes de cierre y a los siguientes
- * si el negocio nuevo aporta varios meses. Al ganarse deja de contar aquí
- * porque el valor pasa a ser forecast manual del cliente nuevo.
+ * cierre y valor suma, según el criterio, un porcentaje de ese valor (uno por
+ * temperatura; de fábrica, el 100%) a su mes de cierre y a los siguientes si el
+ * negocio nuevo aporta varios meses. Al ganarse deja de contar aquí porque el
+ * valor pasa a ser forecast manual del cliente nuevo.
  */
 export async function leadForecasts(periods: string[], criteria?: ForecastCriteria) {
   const c = criteria ?? (await getForecastCriteria());
   const result = new Map<string, { total: number; leads: LeadForecast[] }>(periods.map((p) => [p, { total: 0, leads: [] }]));
-  const pct: Record<string, number> = { CALIENTE: c.hotLeadPct, TIBIO: c.warmLeadPct };
-  const temperatures = Object.keys(pct).filter((t) => pct[t] > 0);
+  const temperatures = ["CALIENTE", "TIBIO", "FRIO"].filter((t) => leadPct(t, c) > 0);
   if (!temperatures.length || !periods.length) return result;
 
   // Un lead que cerró unos meses antes todavía aporta si el negocio dura varios meses.
@@ -202,7 +275,7 @@ export async function leadForecasts(periods: string[], criteria?: ForecastCriter
     select: { id: true, code: true, name: true, source: true, status: true, temperature: true, closePeriod: true, expectedValue: true, owner: { select: { name: true } } },
   });
   for (const l of leads) {
-    const amount = (l.expectedValue! * pct[l.temperature]) / 100;
+    const amount = (l.expectedValue! * leadPct(l.temperature, c)) / 100;
     for (let i = 0; i < c.leadMonths; i++) {
       const bucket = result.get(shiftPeriod(l.closePeriod!, i));
       if (!bucket) continue;

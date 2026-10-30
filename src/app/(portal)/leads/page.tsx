@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
 import { getForecastCriteria, leadForecasts, periodKey, startOfMonth } from "@/lib/analytics";
+import { leadPct } from "@/lib/forecast-criteria";
 import { CONNECTION_STATUS, LEAD_ENTRIES, LEAD_OPEN, LEAD_SOURCES, LEAD_STATUS, LEAD_TEMPERATURE } from "@/lib/enums";
 import { closePeriodOptions, channelToken, LEAD_ROLES } from "@/lib/leads";
 import { daysBetween, fmtCompact, fmtMoney, fmtNumber, fmtPeriod, relativeDays } from "@/lib/format";
@@ -225,7 +226,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Search
                   <tbody>
                     {leads.map((l) => {
                       const days = daysBetween(l.lastActivityAt, now);
-                      const pct = l.temperature === "CALIENTE" ? criteria.hotLeadPct : l.temperature === "TIBIO" ? criteria.warmLeadPct : 0;
+                      const pct = leadPct(l.temperature, criteria);
                       const counts = pct > 0 && LEAD_OPEN.includes(l.status as never) && l.closePeriod && l.expectedValue;
                       return (
                         <tr key={l.id}>

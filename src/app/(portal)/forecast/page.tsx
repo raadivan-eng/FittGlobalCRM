@@ -1,9 +1,10 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireSection } from "@/lib/auth";
-import { companyForecasts, forecastVsBilling, getForecastCriteria, leadForecasts, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
-import { criteriaWindow, describeCriteria } from "@/lib/forecast-criteria";
-import { FORECAST_SOURCE, LEAD_SOURCES, LEAD_STATUS, LEAD_TEMPERATURE, TIERS } from "@/lib/enums";
+import { clientStatuses, companyForecasts, forecastVsBilling, getForecastCriteria, leadForecasts, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
+import { criteriaWindow, describeCriteria, describeLeads } from "@/lib/forecast-criteria";
+import { CLIENT_INACTIVITY, FORECAST_SOURCE, LEAD_SOURCES, LEAD_STATUS, LEAD_TEMPERATURE, TIERS } from "@/lib/enums";
 import { fmtCompact, fmtMoney, fmtNumber, fmtPeriod } from "@/lib/format";
 import { one, type SearchParams } from "@/lib/params";
 import { Card, CardHeader, EnumBadge, PageHeader, StatTile } from "@/components/ui";
@@ -12,6 +13,7 @@ import { ForecastCell } from "./forecast-cell";
 import { ForecastTabs } from "./tabs";
 import { ClientMonthsAdjust, ExcludeMonthButton } from "./adjust-months";
 import { quitarMesExtraordinario } from "@/lib/actions-sales";
+import { ClientStatusControl } from "@/components/client-status";
 import { IconForecast, IconLead, IconSales, IconTarget } from "@/components/icons";
 
 export const metadata = { title: "Forecast" };
@@ -35,7 +37,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
   const criteria = await getForecastCriteria();
   const months = criteriaWindow(period, criteria, now).periods;
 
-  const [companies, forecasts, invoices, series, productForecasts, productSales, exclusions, leadsByPeriod] = await Promise.all([
+  const [companies, forecasts, invoices, series, productForecasts, productSales, exclusions, leadsByPeriod, statuses] = await Promise.all([
     prisma.company.findMany({
       where: { active: true },
       orderBy: { name: "asc" },
@@ -65,17 +67,24 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
       select: { id: true, period: true, companyId: true, notes: true, company: { select: { name: true } } },
     }),
     leadForecasts([period], criteria),
+    clientStatuses(undefined, criteria),
   ]);
 
   const fcByCompany = forecasts.get(period)!;
   const realByCompany = new Map(invoices.map((i) => [i.companyId, i._sum.net ?? 0]));
   const realByProduct = new Map(productSales.map((p) => [p.productId, p._sum.total ?? 0]));
 
+  const isPast = selected.end <= now;
   const rows = companies
     .map((c) => {
       const fc = fcByCompany.get(c.id);
       const forecast = fc?.amount ?? 0;
       const real = realByCompany.get(c.id) ?? 0;
+      const status = statuses.get(c.id);
+      // Un período cerrado se mide con el estado que tenía entonces; el
+      // vigente y los futuros, también con el de hoy (cubre a quien no tiene
+      // historia en la ventana).
+      const inactive = fc?.inactive ?? (isPast ? null : status?.inactive ?? null);
       return {
         company: c,
         fc,
@@ -83,16 +92,19 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
         real,
         gap: real - forecast,
         progress: forecast > 0 ? (real / forecast) * 100 : null,
+        inactive: inactive && forecast === 0 ? inactive : null,
+        manual: status?.inactive === "MANUAL",
+        reason: status?.inactiveReason ?? null,
       };
     })
-    .sort((a, b) => b.forecast - a.forecast || b.real - a.real);
+    .sort((a, b) => Number(!!a.inactive) - Number(!!b.inactive) || b.forecast - a.forecast || b.real - a.real);
+  const inactiveCount = rows.filter((r) => r.inactive).length;
 
   const clientsForecast = rows.reduce((s, r) => s + r.forecast, 0);
   const hotLeads = leadsByPeriod.get(period)!;
   const newBusiness = criteria.newBusiness;
   const totalForecast = clientsForecast + hotLeads.total + newBusiness;
   const totalReal = rows.reduce((s, r) => s + r.real, 0);
-  const isPast = selected.end <= now;
   const isCurrent = period === periodKey(startOfMonth(0, now));
 
   // En el mes en curso el real es parcial: se mide contra el ritmo esperado a
@@ -147,7 +159,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
       <ForecastTabs active="/forecast" />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Forecast del período" value={fmtCompact(totalForecast)} hint={`${fmtNumber(rows.filter((r) => r.forecast > 0).length)} clientes${hotLeads.leads.length ? ` + ${fmtNumber(hotLeads.leads.length)} leads` : " con proyección"}${newBusiness ? " + nuevos" : ""}`} icon={<IconForecast size={15} />} />
+        <StatTile label="Forecast del período" value={fmtCompact(totalForecast)} hint={`${fmtNumber(rows.filter((r) => r.forecast > 0).length)} clientes${hotLeads.leads.length ? ` + ${fmtNumber(hotLeads.leads.length)} leads` : " con proyección"}${newBusiness ? " + nuevos" : ""}${inactiveCount ? ` · ${fmtNumber(inactiveCount)} inactivos fuera` : ""}`} icon={<IconForecast size={15} />} />
         <StatTile label="Facturación real" value={fmtCompact(totalReal)} hint={isCurrent ? "Mes en curso, aún parcial" : isPast ? "Período cerrado" : "Período futuro, sin facturación"} icon={<IconSales size={15} />} />
         <StatTile
           label="Avance"
@@ -198,7 +210,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
               windowLabel
                 ? `Sin carga manual, la meta sale del criterio: ${describeCriteria(criteria)} (${windowLabel}).`
                 : "No hay meses cerrados para proyectar: sólo cuenta lo cargado a mano."
-            }${editable ? " Ajusta el monto para fijarlo; déjalo vacío para volver al criterio." : ""}`}
+            }${criteria.dormantMonths ? ` Quien lleva más de ${criteria.dormantMonths} meses sin comprar, o se inactivó a mano, queda al final en 0.` : ""}${editable ? " Ajusta el monto para fijarlo; déjalo vacío para volver al criterio." : ""}`}
             action={
               <Link href="/forecast/criterio" className="btn btn-ghost !px-2 text-[12.5px]">
                 Criterio
@@ -220,12 +232,35 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.company.id}>
+                {rows.map((r, i) => (
+                  <Fragment key={r.company.id}>
+                  {r.inactive && !rows[i - 1]?.inactive && (
+                    <tr className="bg-[var(--surface-2)]">
+                      <td colSpan={8} className="text-[11.5px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                        Inactivos · {fmtNumber(inactiveCount)} fuera del forecast
+                      </td>
+                    </tr>
+                  )}
+                  <tr className={r.inactive ? "text-[var(--text-secondary)]" : undefined}>
                     <td>
-                      <Link href={`/clientes/${r.company.id}`} className="font-medium hover:text-[var(--brand)] hover:underline">
-                        {r.company.name}
-                      </Link>
+                      <span className="flex items-center gap-2">
+                        <Link href={`/clientes/${r.company.id}`} className="font-medium hover:text-[var(--brand)] hover:underline">
+                          {r.company.name}
+                        </Link>
+                        {editable && (r.manual || !r.inactive) && !isPast && (
+                          <ClientStatusControl
+                            companyId={r.company.id}
+                            companyName={r.company.name}
+                            manual={r.manual}
+                            className="btn btn-ghost ml-auto !px-1.5 !py-0 text-[11.5px] text-[var(--text-muted)]"
+                          />
+                        )}
+                      </span>
+                      {r.inactive && (
+                        <span className="block text-[11.5px] text-[var(--text-muted)]" title={CLIENT_INACTIVITY.get(r.inactive).hint}>
+                          {r.inactive === "MANUAL" ? `Inactivado a mano${r.reason ? `: ${r.reason}` : ""}` : `Más de ${criteria.dormantMonths} meses sin comprar`}
+                        </span>
+                      )}
                     </td>
                     <td><EnumBadge option={TIERS.get(r.company.tier)} /></td>
                     <td className="text-[var(--text-secondary)]">{r.company.owner?.name ?? "—"}</td>
@@ -235,7 +270,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                           <EnumBadge option={FORECAST_SOURCE.get(r.fc.source)} />
                           {r.fc.source === "PROMEDIO" && (
                             <span className="text-[12px] text-[var(--text-muted)]">
-                              {r.fc.dormant ? "inactivo" : r.fc.seasonal ? "estacional" : `${r.fc.months} m`}
+                              {r.fc.inactive ? "inactivo" : r.fc.seasonal ? "estacional" : `${r.fc.months} m`}
                             </span>
                           )}
                           {editable && r.fc.history.length > 0 && (
@@ -259,7 +294,8 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                         companyId={r.company.id}
                         manual={r.fc?.source === "MANUAL" ? r.fc.amount : null}
                         baseline={r.fc?.baseline ?? 0}
-                        editable={editable}
+                        editable={editable && r.inactive !== "MANUAL"}
+                        inactive={!!r.inactive}
                       />
                     </td>
                     <td className="num font-semibold">{r.real > 0 ? fmtMoney(r.real) : "—"}</td>
@@ -286,6 +322,7 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
                       {r.forecast > 0 && measurable ? `${r.gap >= 0 ? "+" : "−"}${fmtMoney(Math.abs(r.gap)).replace("-", "")}` : "—"}
                     </td>
                   </tr>
+                  </Fragment>
                 ))}
               </tbody>
               <tfoot>
@@ -336,9 +373,9 @@ export default async function ForecastPage({ searchParams }: { searchParams: Sea
         <Card>
           <CardHeader
             title={`Leads en el forecast · ${fmtPeriod(period)}`}
-            subtitle={`Prospectos abiertos que aportan a este mes: calientes al ${fmtNumber(criteria.hotLeadPct)}%${criteria.warmLeadPct ? `, tibios al ${fmtNumber(criteria.warmLeadPct)}%` : ""} de su valor${criteria.leadMonths > 1 ? `, durante ${criteria.leadMonths} meses desde el cierre` : ""}. Suman hasta que se ganan o se pierden.`}
+            subtitle={`Prospectos abiertos con cierre proyectado en este mes y valor: ${describeLeads(criteria)}${criteria.leadMonths > 1 ? `, durante ${criteria.leadMonths} meses desde el cierre` : ""}. Suman hasta que se ganan o se pierden.`}
             action={
-              <Link href={`/leads?estado=ABIERTOS&temperatura=CALIENTE&cierre=${period}`} className="btn btn-ghost !px-2 text-[12.5px]">
+              <Link href={`/leads?estado=ABIERTOS&cierre=${period}`} className="btn btn-ghost !px-2 text-[12.5px]">
                 Ver
               </Link>
             }

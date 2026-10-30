@@ -5,8 +5,9 @@ import { CLIENT_ROLES, CONTACT_ROLES, requireSection } from "@/lib/auth";
 import { LEAD_ROLES } from "@/lib/leads";
 import { ContactEditor } from "@/components/contact-forms";
 import { ClientCard } from "./client-editor";
-import { companyForecasts, lastMonths, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
-import { CHANNELS, COMPANY_TYPES, INVOICE_STATUS, ORDER_STATUS, SIIGO_CUSTOMER, STORE_FORMATS, TIERS } from "@/lib/enums";
+import { clientStatuses, companyForecasts, getForecastCriteria, lastMonths, NOT_VOID, periodKey, startOfMonth } from "@/lib/analytics";
+import { ClientStatusControl } from "@/components/client-status";
+import { CHANNELS, CLIENT_INACTIVITY, CLIENT_STATUS, COMPANY_TYPES, INVOICE_STATUS, ORDER_STATUS, SIIGO_CUSTOMER, STORE_FORMATS, TIERS } from "@/lib/enums";
 import { enviarClienteASiigo } from "@/lib/actions-leads";
 import { parseTaxData, taxSummary } from "@/lib/rut";
 import { fmtCompact, fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
@@ -51,12 +52,14 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
   const range = lastMonths(12);
   const since = range[0].start;
 
-  const [invoices, forecasts, orders, pending, topSkus, owners] = await Promise.all([
+  const criteria = await getForecastCriteria();
+  const [invoices, forecasts, statuses, orders, pending, topSkus, owners] = await Promise.all([
     prisma.invoice.findMany({
       where: { companyId: id, issueDate: { gte: since }, status: NOT_VOID },
       select: { issueDate: true, net: true },
     }),
-    companyForecasts(range.map((r) => r.period), id),
+    companyForecasts(range.map((r) => r.period), id, { criteria }),
+    clientStatuses([id], criteria),
     prisma.salesOrder.findMany({
       where: { companyId: id },
       orderBy: { date: "desc" },
@@ -92,6 +95,13 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
   const currentPeriod = periodKey(startOfMonth(0));
   const monthReal = realByPeriod.get(currentPeriod) ?? 0;
   const monthForecast = fcByPeriod.get(currentPeriod) ?? 0;
+  const status = statuses.get(id)!;
+  const statusHint =
+    status.inactive === "MANUAL"
+      ? `Inactivado el ${fmtDate(status.inactiveSince!)}${status.inactiveReason ? `: ${status.inactiveReason}` : ""}`
+      : status.inactive === "SIN_COMPRAS"
+        ? `Más de ${criteria.dormantMonths} meses sin comprar`
+        : null;
 
   // Sólo los clientes convertidos con su documento se pueden enviar a Siigo desde aquí.
   const fiscal = parseTaxData(company.fiscalData);
@@ -105,7 +115,11 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
         subtitle={`${company.code} · ${COMPANY_TYPES.label(company.type)} · ${CHANNELS.label(company.channel)}`}
         actions={
           <>
+            <span title={statusHint ?? CLIENT_STATUS.get(status.status).hint}>
+              <EnumBadge option={CLIENT_STATUS.get(status.status)} dot />
+            </span>
             <EnumBadge option={TIERS.get(company.tier)} />
+            {canEditClient && <ClientStatusControl companyId={company.id} companyName={company.name} manual={status.inactive === "MANUAL"} />}
             <Link href={`/tiendas?cliente=${company.id}`} className="btn btn-secondary">
               <IconStore size={15} /> Ver tiendas
             </Link>
@@ -115,7 +129,18 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Facturación 12 meses" value={fmtCompact(billed12)} hint={`${invoices.length} facturas emitidas`} icon={<IconSales size={15} />} />
-        <StatTile label="Mes en curso" value={fmtCompact(monthReal)} hint={monthForecast ? `${((monthReal / monthForecast) * 100).toFixed(0)}% del forecast (${fmtCompact(monthForecast)})` : "Sin historial para proyectar"} icon={<IconTarget size={15} />} />
+        <StatTile
+          label="Mes en curso"
+          value={fmtCompact(monthReal)}
+          hint={
+            monthForecast
+              ? `${((monthReal / monthForecast) * 100).toFixed(0)}% del forecast (${fmtCompact(monthForecast)})`
+              : status.inactive
+                ? "Inactivo: fuera del forecast"
+                : "Sin historial para proyectar"
+          }
+          icon={<IconTarget size={15} />}
+        />
         <StatTile label="Por cobrar" value={fmtCompact(owed)} hint={overdue > 0 ? `${fmtCompact(overdue)} ya vencido` : "Al día"} icon={<IconBuilding size={15} />} />
         <StatTile label="Red del cliente" value={fmtNumber(company.stores.length)} hint={`${fmtNumber(company.contacts.length)} contactos registrados`} icon={<IconStore size={15} />} />
       </div>
@@ -150,6 +175,12 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
             <KeyValue label="Canal">
               <span title={CHANNELS.get(company.channel).hint}><EnumBadge option={CHANNELS.get(company.channel)} /></span>
             </KeyValue>
+            <KeyValue label="Estado">
+              <span title={status.inactive ? CLIENT_INACTIVITY.get(status.inactive).hint : CLIENT_STATUS.get(status.status).hint}>
+                <EnumBadge option={status.inactive ? CLIENT_INACTIVITY.get(status.inactive) : CLIENT_STATUS.get(status.status)} />
+              </span>
+            </KeyValue>
+            <KeyValue label="Última compra">{status.lastPurchase ? fmtDate(status.lastPurchase) : "Nunca"}</KeyValue>
             <KeyValue label="NIT">{company.taxId ?? "—"}</KeyValue>
             <KeyValue label="Responsable">{company.owner?.name ?? "Sin asignar"}</KeyValue>
             <KeyValue label="Ciudad">{company.city ?? "—"}</KeyValue>
@@ -173,6 +204,11 @@ export default async function ClienteDetalle({ params }: { params: Promise<{ id:
                 {company.siigoError ? "Reintentar en Siigo" : "Crear en Siigo"}
               </button>
             </form>
+          )}
+          {status.inactive === "MANUAL" && status.inactiveReason && (
+            <p className="border-t border-[var(--border)] px-4 py-3 text-[12.5px] text-[var(--text-secondary)]">
+              <span className="font-medium">Inactivo desde el {fmtDate(status.inactiveSince!)}:</span> {status.inactiveReason}
+            </p>
           )}
           {company.notes && <p className="border-t border-[var(--border)] px-4 py-3 text-[12.5px] text-[var(--text-secondary)]">{company.notes}</p>}
         </ClientCard>

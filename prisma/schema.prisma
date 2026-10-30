@@ -64,6 +64,9 @@ model User {
 // ─────────────────────────────  CRM: clientes y tiendas  ──────────────────────
 
 /// Empresa cliente (cadena, mayorista, independiente). Agrupa tiendas y contactos.
+/// `active` dice si el registro sigue vigente; el estado comercial (ACTIVO o
+/// INACTIVO) se deriva al leer —meses sin compra o `inactiveSince`— con
+/// clientStatuses de src/lib/analytics.ts.
 model Company {
   id              String   @id @default(cuid())
   code            String   @unique
@@ -80,6 +83,8 @@ model Company {
   email           String?
   notes           String?
   active          Boolean  @default(true)
+  inactiveSince   DateTime? // inactivado a mano: desde ese mes el forecast no lo proyecta
+  inactiveReason  String?
   createdAt       DateTime @default(now())
   siigoId         String? // id del tercero en Siigo, una vez creado o cruzado por NIT
   fiscalData      String? // JSON con lo que se leyó del RUT o de la Cámara de Comercio
@@ -547,8 +552,10 @@ model ForecastExclusion {
 
 /// Criterio con que se proyecta el forecast automático de cada cliente y lo
 /// que suman los nuevos negocios. Hay una sola fila («default»); sin ella rige
-/// DEFAULT_CRITERIA de src/lib/forecast-criteria.ts, que reproduce el promedio
-/// del año vigente. El método es un catálogo (FORECAST_METHODS).
+/// DEFAULT_CRITERIA de src/lib/forecast-criteria.ts: promedio del año vigente,
+/// inactivo tras seis meses sin compra y los leads al 100%. El método es un
+/// catálogo (FORECAST_METHODS). Los defaults de columna son los de la 0020; la
+/// acción de guardar siempre escribe todos los campos.
 model ForecastCriteria {
   id                String   @id @default("default")
   method            String   @default("ANIO_VIGENTE") // ANIO_VIGENTE | MOVIL | PONDERADO | ESTACIONAL
@@ -560,6 +567,7 @@ model ForecastCriteria {
   dormantMonths     Int      @default(0) // 0: nunca se da por inactivo
   hotLeadPct        Float    @default(100)
   warmLeadPct       Float    @default(0)
+  coldLeadPct       Float    @default(100)
   leadMonths        Int      @default(1)
   newBusiness       Float    @default(0) // monto mensual de negocios aún sin identificar
   updatedById       String?

@@ -7,6 +7,8 @@ import { closePeriodOptions, LEAD_ROLES } from "@/lib/leads";
 import { agregarNota, quitarContactoLead, quitarTiendaLead } from "@/lib/actions-leads";
 import { claudeApiKey } from "@/lib/lector-documentos";
 import { siigoCustomersReady } from "@/lib/siigo-clientes";
+import { getForecastCriteria } from "@/lib/analytics";
+import { leadPct } from "@/lib/forecast-criteria";
 import { fmtDate, fmtDateTime, fmtMoney, fmtPeriod } from "@/lib/format";
 import { Avatar, Card, CardHeader, EnumBadge, KeyValue, PageHeader } from "@/components/ui";
 import { IconExternal, IconForecast, IconMail, IconPhone, IconPin } from "@/components/icons";
@@ -24,7 +26,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   await requireSection("leads");
   const { id } = await params;
 
-  const [lead, owners, reader, siigo] = await Promise.all([
+  const [lead, owners, reader, siigo, criteria] = await Promise.all([
     prisma.lead.findUnique({
       where: { id },
       include: {
@@ -39,11 +41,13 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
     prisma.user.findMany({ where: { active: true, role: { in: LEAD_ROLES } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     claudeApiKey().then(Boolean),
     siigoCustomersReady(),
+    getForecastCriteria(),
   ]);
   if (!lead) notFound();
 
   const isOpen = (LEAD_OPEN as readonly string[]).includes(lead.status);
-  const counts = isOpen && lead.temperature === "CALIENTE" && lead.closePeriod && lead.expectedValue;
+  const pct = leadPct(lead.temperature, criteria);
+  const counts = isOpen && pct > 0 && lead.closePeriod && lead.expectedValue;
   const editable = !lead.company;
 
   return (
@@ -232,7 +236,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   <p className="flex items-start gap-2 border-b border-[var(--border)] bg-[var(--brand-soft)] px-4 py-2.5 text-[12.5px] text-[var(--brand-ink)]">
                     <IconForecast size={14} className="mt-px shrink-0" />
                     <span>
-                      Suma {fmtMoney(lead.expectedValue!)} al{" "}
+                      Suma {fmtMoney((lead.expectedValue! * pct) / 100)}{pct < 100 ? ` (${pct}% de su valor)` : ""} al{" "}
                       <Link href={`/forecast?periodo=${lead.closePeriod}`} className="font-semibold hover:underline">
                         forecast de {fmtPeriod(lead.closePeriod!)}
                       </Link>
